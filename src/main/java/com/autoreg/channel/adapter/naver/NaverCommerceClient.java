@@ -45,10 +45,14 @@ public class NaverCommerceClient {
     private final JsonMapper json;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     private final Map<String, Token> tokens = new ConcurrentHashMap<>();
+    /** 이미지 업로드를 연달아 보내면 429 가 난다 (실측 2026-10-05). 계정마다 간격을 둔다 */
+    private final Map<String, Long> lastUpload = new ConcurrentHashMap<>();
+    private final long uploadGapMs;
 
     public NaverCommerceClient(@Value("${autoreg.naver.base-url:https://api.commerce.naver.com/external}") String base,
-            JsonMapper json) {
+            @Value("${autoreg.naver.upload-gap-ms:700}") long uploadGapMs, JsonMapper json) {
         this.base = base;
+        this.uploadGapMs = uploadGapMs;
         this.json = json;
     }
 
@@ -88,6 +92,7 @@ public class NaverCommerceClient {
         } catch (IOException e) {
             throw ChannelException.invalid("이미지 파일을 읽을 수 없습니다: " + file.getFileName());
         }
+        pace(c.clientId());
         String boundary = "----autoreg" + UUID.randomUUID();
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         String name = file.getFileName().toString();
@@ -113,6 +118,20 @@ public class NaverCommerceClient {
     /** 원상품 조회 (템플릿 가져오기용, 읽기 전용) */
     public Map<String, Object> getOriginProduct(Credentials c, String originProductNo) {
         return toMap(send(c, "GET", "/v2/products/origin-products/" + URLEncoder.encode(originProductNo, StandardCharsets.UTF_8), null));
+    }
+
+    private void pace(String clientId) {
+        synchronized (lastUpload) {
+            long wait = lastUpload.getOrDefault(clientId, 0L) + uploadGapMs - System.currentTimeMillis();
+            if (wait > 0) {
+                try {
+                    Thread.sleep(wait);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            lastUpload.put(clientId, System.currentTimeMillis());
+        }
     }
 
     private JsonNode send(Credentials c, String method, String path, Object body) {

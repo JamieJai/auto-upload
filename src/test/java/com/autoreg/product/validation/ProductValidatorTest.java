@@ -59,6 +59,15 @@ public class ProductValidatorTest {
     }
 
     @Test
+    void asPhoneMustBeAPhoneNumber() {
+        Product p = complete();
+        p.setAsPhone("상세설명참조");
+        assertThat(validator.validate(p, ValidationPhase.INPUT)).extracting(ValidationIssue::code).containsExactly("INVALID");
+        p.setAsPhone("010-3350-8536");
+        assertThat(validator.validate(p, ValidationPhase.INPUT)).isEmpty();
+    }
+
+    @Test
     void noOptionsIsReported() {
         Product p = complete();
         p.getOptions().clear();

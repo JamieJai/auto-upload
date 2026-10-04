@@ -26,7 +26,7 @@ class NaverCommerceClientTest {
     @BeforeEach
     void setUp() throws Exception {
         naver = new FakeNaver();
-        client = new NaverCommerceClient(naver.baseUrl(), JsonMapper.builder().build());
+        client = new NaverCommerceClient(naver.baseUrl(), 0, JsonMapper.builder().build());
     }
 
     @AfterEach

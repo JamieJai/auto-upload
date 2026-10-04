@@ -104,6 +104,11 @@ public class ProductValidator {
                 issues.add(new ValidationIssue("notice." + f.key(), "REQUIRED", "고시정보 '" + f.label() + "'을(를) 입력하세요"));
             }
         }
+        // 채널이 A/S 전화번호를 숫자로 요구한다 ("상세설명참조" 같은 값은 등록 단계에서 거부된다)
+        String digits = p.getAsPhone() == null ? "" : p.getAsPhone().replaceAll("[^0-9]", "");
+        if (!blank(p.getAsPhone()) && (digits.length() < 8 || digits.length() > 12)) {
+            issues.add(new ValidationIssue("notice.as_phone", "INVALID", "A/S 전화번호는 숫자 8~12자리여야 합니다 (예: 02-000-0000)"));
+        }
     }
 
     private static void checkImages(Product p, List<ValidationIssue> issues) {
