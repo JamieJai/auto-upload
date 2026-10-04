@@ -1,0 +1,21 @@
+# auto-app 배포용. /opt/autoreg 에 이 파일과 .env 를 두고 실행한다.
+services:
+  backend:
+    build: ./backend
+    image: autoreg-backend:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_HOST: redis
+    ports: ["8080:8080"]
+    depends_on: [redis]
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports: ["127.0.0.1:6379:6379"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+
+volumes:
+  redisdata:
