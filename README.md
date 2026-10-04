@@ -1,4 +1,4 @@
-# autoreg-backend
+# auto-upload (backend)
 
 상품등록 자동화 플랫폼 백엔드. Spring Boot 4.1 / Java 21.
 
