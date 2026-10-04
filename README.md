@@ -9,7 +9,7 @@
 ├── compose.yml   ← deploy/compose.yml
 ├── .env          ← deploy/.env.example 참고, 레포에 커밋하지 않음
 ├── backend/      ← 이 레포
-└── frontend/     ← 대시보드 레포 (nginx 이미지로 빌드)
+└── frontend/     ← JamieJai/auto-upload-frontend (nginx 이미지로 빌드)
 
 /data            ← HDD 1.5TB (hdd2t). images/, backup/pg/
 ```
