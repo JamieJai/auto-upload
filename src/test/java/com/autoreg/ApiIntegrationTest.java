@@ -33,7 +33,8 @@ import com.jayway.jsonpath.JsonPath;
 @SpringBootTest(properties = {
         "autoreg.master-key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         "autoreg.admin.user=admin", "autoreg.admin.password=test-password-123",
-        "management.health.redis.enabled=false"})
+        "management.health.redis.enabled=false",
+        "autoreg.web-fetch.allow-private=true"})
 @Testcontainers
 class ApiIntegrationTest {
 
@@ -272,6 +273,66 @@ class ApiIntegrationTest {
         mvc.perform(get("/api/excel/template")).andExpect(status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
                         .string("Content-Disposition", org.hamcrest.Matchers.containsString("attachment")));
+    }
+
+    @Test
+    void webImagesShowCandidatesThenImportOnlyPicked() throws Exception {
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        byte[] big = png("b.png", 800, 1000).getBytes();
+        byte[] big2 = png("c.png", 900, 600).getBytes();
+        byte[] small = png("s.png", 100, 100).getBytes();
+        server.createContext("/", ex -> {
+            String path = ex.getRequestURI().getPath();
+            byte[] body = switch (path) {
+                case "/p/1" -> """
+                        <html><body><img src="/big.png"><img src="/big.png?dup=1"><img src="/small.png">
+                        <img data-src="/big2.png" src="/x.gif"></body></html>""".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                case "/big.png" -> big;
+                case "/big2.png" -> big2;
+                case "/small.png" -> small;
+                default -> new byte[0];
+            };
+            ex.getResponseHeaders().add("Content-Type", path.startsWith("/p/") ? "text/html; charset=utf-8" : "image/png");
+            ex.sendResponseHeaders(body.length == 0 ? 404 : 200, body.length == 0 ? -1 : body.length);
+            if (body.length > 0) {
+                ex.getResponseBody().write(body);
+            }
+            ex.close();
+        });
+        server.start();
+        try {
+            String base = "http://localhost:" + server.getAddress().getPort();
+            long t = createTenant("shop-a");
+            String created = mvc.perform(json(post("/api/tenants/{t}/products", t), """
+                    {"code":"WEB1"}""")).andReturn().getResponse().getContentAsString();
+            long id = ((Number) JsonPath.read(created, "$.id")).longValue();
+
+            // 허용 도메인이 아니면 거부
+            mvc.perform(json(post("/api/tenants/{t}/web-images/candidates", t), "{\"url\":\"" + base + "/p/1\"}"))
+                    .andExpect(status().isBadRequest());
+            mvc.perform(json(put("/api/tenants/{t}", t), """
+                    {"code":"shop-a","name":"shop-a","allowedImageDomains":["localhost"]}""")).andExpect(status().isOk());
+
+            // 작은 이미지와 같은 내용의 중복은 빠진다
+            mvc.perform(json(post("/api/tenants/{t}/web-images/candidates", t), "{\"url\":\"" + base + "/p/1\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$", hasSize(2)))
+                    .andExpect(jsonPath("$[0].width").value(800));
+            // 아무것도 저장되지 않았다
+            mvc.perform(get("/api/tenants/{t}/products/{id}", t, id)).andExpect(jsonPath("$.images", hasSize(0)));
+
+            mvc.perform(json(post("/api/tenants/{t}/products/{id}/web-images", t, id), """
+                    {"pageUrl":"%s/p/1","picks":[{"url":"%s/big2.png","slot":"detail"}]}""".formatted(base, base)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$[0].slot").value("detail"));
+            mvc.perform(get("/api/tenants/{t}/products/{id}", t, id))
+                    .andExpect(jsonPath("$.images", hasSize(1)))
+                    .andExpect(jsonPath("$.images[0].sourceType").value("WEB"))
+                    .andExpect(jsonPath("$.images[0].sourceUrl").value(base + "/big2.png"))
+                    .andExpect(jsonPath("$.images[0].width").value(900));
+        } finally {
+            server.stop(0);
+        }
     }
 
     private static org.springframework.mock.web.MockMultipartFile png(String name, int w, int h) throws Exception {
