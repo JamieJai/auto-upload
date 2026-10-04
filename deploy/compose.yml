@@ -8,6 +8,8 @@ services:
     environment:
       REDIS_HOST: redis
     ports: ["8080:8080"]
+    volumes:
+      - /data/images:/data/images
     depends_on: [redis]
 
   redis:

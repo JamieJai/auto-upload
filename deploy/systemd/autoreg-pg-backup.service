@@ -1,0 +1,6 @@
+[Unit]
+Description=autoreg PostgreSQL dump to /data/backup/pg
+After=docker.service network-online.target
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c '/opt/autoreg/backend/deploy/pg_backup.sh >> /data/backup/pg/backup.log 2>&1'
