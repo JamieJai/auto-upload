@@ -16,15 +16,18 @@ public final class ChannelDtos {
             @NotNull Channel channel,
             @NotBlank @Size(max = 100) String displayName,
             Map<String, String> credentials,
+            Map<String, Object> settings,
             Boolean active) {}
 
     public record ChannelAccountResponse(Long id, Channel channel, String displayName, boolean hasCredentials,
-            boolean active, OffsetDateTime updatedAt) {
+            Map<String, Object> settings, boolean active, OffsetDateTime updatedAt) {
         static ChannelAccountResponse of(ChannelAccount a) {
             return new ChannelAccountResponse(a.getId(), a.getChannel(), a.getDisplayName(),
-                    a.getCredentialsEnc() != null, a.isActive(), a.getUpdatedAt());
+                    a.getCredentialsEnc() != null, a.getSettings(), a.isActive(), a.getUpdatedAt());
         }
     }
+
+    public record TemplateRequest(@NotBlank String originProductNo) {}
 
     public record CategoryMappingRequest(
             @NotNull Channel channel,

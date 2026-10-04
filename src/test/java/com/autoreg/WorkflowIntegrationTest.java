@@ -67,11 +67,14 @@ class WorkflowIntegrationTest {
     static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:16");
 
     static Path imageRoot;
+    static com.autoreg.channel.naver.FakeNaver naver;
 
     @DynamicPropertySource
     static void props(DynamicPropertyRegistry r) throws Exception {
         imageRoot = Files.createTempDirectory("autoreg-wf");
         r.add("autoreg.image-root", () -> imageRoot.toString());
+        naver = new com.autoreg.channel.naver.FakeNaver();
+        r.add("autoreg.naver.base-url", naver::baseUrl);
     }
 
     /** 요청된 필드만 채워 돌려주는 LLM. mode 로 실패를 흉내 낸다 */
@@ -309,19 +312,60 @@ class WorkflowIntegrationTest {
     }
 
     @Test
-    void missingCategoryMappingAndSmartStoreStubFailClearly() throws Exception {
-        mvc.perform(json(post("/api/tenants/{t}/channel-accounts", tenant), """
-                {"channel":"SMARTSTORE","displayName":"샵에이 스토어","credentials":{"clientId":"x"}}"""));
-        approved("SS6");
-        worker.poll();
-        List<String> errors = jdbc.queryForList("SELECT last_error FROM job WHERE type='REGISTER' AND status='FAILED_INVALID'", String.class);
-        assertThat(errors).hasSize(1).first().asString().contains("카테고리 매핑");
+    void smartStoreDryRunThenRealRegistration() throws Exception {
+        // CAFE24 가짜 계정은 끄고 스마트스토어만 쓴다
+        Long cafe = jdbc.queryForObject("SELECT id FROM channel_account WHERE channel='CAFE24'", Long.class);
+        mvc.perform(json(put("/api/tenants/{t}/channel-accounts/{id}", tenant, cafe), """
+                {"channel":"CAFE24","displayName":"off","active":false}"""));
+        String acc = mvc.perform(json(post("/api/tenants/{t}/channel-accounts", tenant), """
+                {"channel":"SMARTSTORE","displayName":"charming point","credentials":{"clientId":"%s","clientSecret":"%s"}}"""
+                .formatted(com.autoreg.channel.naver.FakeNaver.CLIENT_ID, com.autoreg.channel.naver.FakeNaver.CLIENT_SECRET)))
+                .andReturn().getResponse().getContentAsString();
+        long accId = ((Number) JsonPath.read(acc, "$.id")).longValue();
         mvc.perform(json(put("/api/tenants/{t}/category-mappings", tenant), """
                 {"channel":"SMARTSTORE","category":"원피스","channelCategoryId":"50000807"}"""));
-        jdbc.update("UPDATE job SET status='QUEUED', attempt=0 WHERE status='FAILED_INVALID'");
+
+        // 템플릿 없이 승인하면 설정 부족으로 '수정 필요'
+        approved("NV1");
         worker.poll();
-        assertThat(jdbc.queryForObject("SELECT last_error FROM job WHERE status='FAILED_INVALID'", String.class))
-                .contains("스마트스토어 연동은 아직 구현되지 않았습니다");
+        assertThat(jdbc.queryForObject("SELECT last_error FROM job WHERE type='REGISTER'", String.class)).contains("템플릿");
+
+        // 기존 상품에서 배송·원산지를 가져온다. dryRun 은 기본 켜짐
+        mvc.perform(json(post("/api/tenants/{t}/channel-accounts/{id}/template", tenant, accId), """
+                {"originProductNo":"123"}"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.settings.dryRun").value(true))
+                .andExpect(jsonPath("$.settings.displayStatus").value("SUSPENSION"))
+                .andExpect(jsonPath("$.settings.originAreaInfo.originAreaCode").value("00"))
+                .andExpect(jsonPath("$.settings.naverShoppingSearchInfo.brandName").value("charming_point_"));
+
+        Long jobId = jdbc.queryForObject("SELECT id FROM job WHERE type='REGISTER'", Long.class);
+        mvc.perform(post("/api/jobs/{id}/retry", jobId));
+        worker.poll();
+        mvc.perform(get("/api/jobs/{id}", jobId))
+                .andExpect(jsonPath("$.job.status").value("FAILED_INVALID"))
+                .andExpect(jsonPath("$.job.lastError").value(containsString("DRY_RUN")))
+                .andExpect(jsonPath("$.listing.lastResponse.request.originProduct.leafCategoryId").value("50000807"))
+                .andExpect(jsonPath("$.listing.lastResponse.request.originProduct.detailAttribute.sellerCodeInfo.sellerManagementCode").value("NV1"));
+        assertThat(naver.registerBodies).isEmpty();
+        int uploadsAfterDryRun = (int) naver.requests.stream().filter(r -> r.contains("product-images")).count();
+        assertThat(uploadsAfterDryRun).isEqualTo(6);
+
+        // dryRun 끄고 재시도 → 실제 등록. 이미지는 다시 올리지 않는다
+        String settings = mvc.perform(get("/api/tenants/{t}/channel-accounts", tenant)).andReturn().getResponse().getContentAsString();
+        java.util.List<java.util.Map<String, Object>> all = JsonPath.read(settings, "$[?(@.channel=='SMARTSTORE')].settings");
+        java.util.Map<String, Object> st = all.get(0);
+        java.util.Map<String, Object> next = new java.util.HashMap<>(st);
+        next.put("dryRun", false);
+        mvc.perform(json(put("/api/tenants/{t}/channel-accounts/{id}", tenant, accId),
+                JsonMapper.builder().build().writeValueAsString(java.util.Map.of("channel", "SMARTSTORE", "displayName", "charming point", "settings", next))))
+                .andExpect(jsonPath("$.hasCredentials").value(true));
+        mvc.perform(post("/api/jobs/{id}/retry", jobId));
+        worker.poll();
+        assertThat(jdbc.queryForObject("SELECT channel_product_no FROM channel_listing WHERE status='COMPLETED'", String.class))
+                .isEqualTo("13700000001");
+        assertThat(naver.registerBodies).hasSize(1);
+        assertThat(naver.requests.stream().filter(r -> r.contains("product-images")).count()).isEqualTo(uploadsAfterDryRun);
     }
 
     @Test

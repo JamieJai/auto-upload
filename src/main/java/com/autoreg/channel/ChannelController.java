@@ -27,6 +27,7 @@ import lombok.RequiredArgsConstructor;
 public class ChannelController {
 
     private final ChannelAccountService service;
+    private final com.autoreg.channel.adapter.SmartStoreAdapter smartStore;
 
     @GetMapping("/channel-accounts")
     public List<ChannelAccountResponse> accounts(@PathVariable Long tenantId) {
@@ -43,6 +44,16 @@ public class ChannelController {
     public ChannelAccountResponse updateAccount(@PathVariable Long tenantId, @PathVariable Long id,
             @Valid @RequestBody ChannelAccountRequest req) {
         return ChannelAccountResponse.of(service.update(tenantId, id, req));
+    }
+
+    @PostMapping("/channel-accounts/{id}/template")
+    public ChannelAccountResponse importTemplate(@PathVariable Long tenantId, @PathVariable Long id,
+            @Valid @RequestBody ChannelDtos.TemplateRequest req) {
+        try {
+            return ChannelAccountResponse.of(service.importTemplate(tenantId, id, req.originProductNo(), smartStore));
+        } catch (com.autoreg.channel.adapter.ChannelException e) {
+            throw new IllegalArgumentException(e.getMessage());
+        }
     }
 
     @GetMapping("/category-mappings")

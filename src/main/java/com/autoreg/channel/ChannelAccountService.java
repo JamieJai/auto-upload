@@ -70,6 +70,23 @@ public class ChannelAccountService {
         return json.readValue(new String(cipher.decrypt(a.getCredentialsEnc()), StandardCharsets.UTF_8), MAP);
     }
 
+    /** 스마트스토어: 기존 상품의 배송·원산지 등을 설정에 합친다 (dryRun 등 기존 키는 유지) */
+    @Transactional
+    public ChannelAccount importTemplate(Long tenantId, Long id, String originProductNo,
+            com.autoreg.channel.adapter.SmartStoreAdapter smartStore) {
+        ChannelAccount a = get(tenantId, id);
+        if (a.getChannel() != Channel.SMARTSTORE) {
+            throw new IllegalArgumentException("스마트스토어 계정만 템플릿을 가져올 수 있습니다");
+        }
+        Map<String, Object> merged = new java.util.HashMap<>(a.getSettings());
+        merged.putAll(smartStore.template(credentials(a), originProductNo.trim()));
+        merged.putIfAbsent("dryRun", true);
+        merged.putIfAbsent("displayStatus", "SUSPENSION");
+        merged.put("templateOriginProductNo", originProductNo.trim());
+        a.setSettings(merged);
+        return a;
+    }
+
     public List<CategoryMapping> mappings(Long tenantId) {
         tenants.get(tenantId);
         return mappings.findByTenantIdOrderByChannelAscCategoryAsc(tenantId);
@@ -103,6 +120,9 @@ public class ChannelAccountService {
         if (req.credentials() != null) {
             a.setCredentialsEnc(req.credentials().isEmpty() ? null
                     : cipher.encrypt(json.writeValueAsString(req.credentials()).getBytes(StandardCharsets.UTF_8)));
+        }
+        if (req.settings() != null) {
+            a.setSettings(new java.util.HashMap<>(req.settings()));
         }
         if (req.active() != null) {
             a.setActive(req.active());

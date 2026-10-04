@@ -14,7 +14,7 @@ import com.autoreg.product.Product;
 import com.autoreg.product.ProductImage;
 import com.autoreg.product.ProductMeasurement;
 
-class ProductValidatorTest {
+public class ProductValidatorTest {
 
     private final ProductValidator validator = new ProductValidator();
 
@@ -77,7 +77,7 @@ class ProductValidatorTest {
         return issues.stream().map(ValidationIssue::field).toList();
     }
 
-    static Product complete() {
+    public static Product complete() {
         Product p = new Product();
         p.setCode("SS2609001");
         p.setCategory("원피스");

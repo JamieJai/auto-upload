@@ -1,9 +1,13 @@
 package com.autoreg.channel;
 
 import java.time.OffsetDateTime;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -38,6 +42,10 @@ public class ChannelAccount {
 
     /** CredentialCipher 로 암호화한 JSON. 응답에 절대 싣지 않는다 */
     private byte[] credentialsEnc;
+
+    /** 비밀이 아닌 채널 설정. 스마트스토어: dryRun, displayStatus, deliveryInfo 등 (SmartStorePayload 참고) */
+    @JdbcTypeCode(SqlTypes.JSON)
+    private Map<String, Object> settings = new HashMap<>();
 
     private boolean active = true;
 
