@@ -59,6 +59,15 @@ public class ProductValidatorTest {
     }
 
     @Test
+    void tagsMustBeUnder30Utf8Bytes() {
+        Product p = complete();
+        p.setSearchKeywords(new java.util.ArrayList<>(List.of("린넨원피스", "린넨셔츠롱원피스추천")));  // 15B, 30B
+        assertThat(validator.validate(p, ValidationPhase.READY)).extracting(ValidationIssue::code).containsExactly("TOO_LONG_BYTES");
+        assertThat(ProductValidator.tagFits("abcdefghijklmnopqrstuvwxyz123")).isTrue();   // 29B
+        assertThat(ProductValidator.tagFits("abcdefghijklmnopqrstuvwxyz1234")).isFalse(); // 30B
+    }
+
+    @Test
     void asPhoneMustBeAPhoneNumber() {
         Product p = complete();
         p.setAsPhone("상세설명참조");

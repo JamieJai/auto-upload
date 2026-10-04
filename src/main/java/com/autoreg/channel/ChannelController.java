@@ -56,6 +56,16 @@ public class ChannelController {
         }
     }
 
+    @PostMapping("/category-mappings/{id}/reference")
+    public CategoryMappingResponse importReference(@PathVariable Long tenantId, @PathVariable Long id,
+            @Valid @RequestBody ChannelDtos.ReferenceRequest req) {
+        try {
+            return CategoryMappingResponse.of(service.importReference(tenantId, id, req.originProductNo(), Boolean.TRUE.equals(req.force()), smartStore));
+        } catch (com.autoreg.channel.adapter.ChannelException e) {
+            throw new IllegalArgumentException(e.getMessage());
+        }
+    }
+
     @GetMapping("/category-mappings")
     public List<CategoryMappingResponse> mappings(@PathVariable Long tenantId) {
         return service.mappings(tenantId).stream().map(CategoryMappingResponse::of).toList();

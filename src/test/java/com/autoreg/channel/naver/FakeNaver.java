@@ -29,6 +29,10 @@ public class FakeNaver implements AutoCloseable {
     public volatile String existingCode;
     public volatile int registerStatus = 200;
     public volatile boolean expireNextToken;
+    /** 재조회 때 상품명을 다르게 돌려준다 (검증 실패 흉내) */
+    public volatile boolean readbackMismatch;
+    public final List<String> uploadedTypes = new ArrayList<>();
+    private volatile String lastRegistered;
 
     public FakeNaver() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -80,6 +84,10 @@ public class FakeNaver implements AutoCloseable {
                     send(ex, 400, "{\"message\":\"no file\"}");
                     return;
                 }
+                java.util.regex.Matcher ct = java.util.regex.Pattern.compile("Content-Type: (image/[a-z]+)").matcher(body);
+                synchronized (uploadedTypes) {
+                    uploadedTypes.add(ct.find() ? ct.group(1) : "?");
+                }
                 send(ex, 200, "{\"images\":[{\"url\":\"https://shop-phinf.pstatic.net/fake/" + requests.size() + ".jpg\"}]}");
             }
             case "/v2/products" -> {
@@ -91,16 +99,32 @@ public class FakeNaver implements AutoCloseable {
                 } else if (registerStatus == 500) {
                     send(ex, 500, "{\"message\":\"internal\"}");
                 } else {
+                    lastRegistered = body;
                     send(ex, 200, "{\"originProductNo\":13700000001,\"smartstoreChannelProductNo\":13700000002}");
                 }
             }
+            case "/v2/products/channel-products/13700000002" -> {
+                // 보낸 본문을 그대로 돌려준다 (네이버 재조회 흉내)
+                String b = lastRegistered == null ? "{}" : lastRegistered;
+                if (readbackMismatch) {
+                    b = b.replaceFirst("\"name\":\"", "\"name\":\"바뀐 ");
+                }
+                send(ex, 200, b);
+            }
+            case "/v2/products/origin-products/124" -> send(ex, 200, """
+                    {"originProduct":{"name":"[테스트] 샘플 원피스","leafCategoryId":"50000807","deliveryInfo":{"deliveryType":"DELIVERY"},
+                     "detailAttribute":{"originAreaInfo":{"originAreaCode":"00"}}},"smartstoreChannelProduct":{}}""");
             case "/v2/products/origin-products/123" -> send(ex, 200, """
-                    {"originProduct":{"statusType":"SALE","deliveryInfo":{"deliveryType":"DELIVERY","deliveryCompany":"CJGLS",
+                    {"originProduct":{"statusType":"SALE","name":"린넨 셔츠 롱원피스","leafCategoryId":"50000807","salePrice":52000,
+                     "customerBenefit":{},"deliveryInfo":{"deliveryType":"DELIVERY","deliveryCompany":"CJGLS",
                       "deliveryFee":{"deliveryFeeType":"FREE","baseFee":0},"claimDeliveryInfo":{"returnDeliveryFee":2500,"exchangeDeliveryFee":5000}},
                      "detailAttribute":{"originAreaInfo":{"originAreaCode":"00","content":"국산","plural":false},"taxType":"TAX",
                       "minorPurchasable":true,"certificationTargetExcludeContent":{"kcCertifiedProductExclusionYn":"TRUE"},
-                      "naverShoppingSearchInfo":{"modelName":"x","brandName":"charming_point_","manufacturerName":"협력업체"}}},
-                     "smartstoreChannelProduct":{"naverShoppingRegistration":true,"channelProductDisplayStatusType":"ON"}}""");
+                      "naverShoppingSearchInfo":{"modelName":"x","brandName":"charming_point_","manufacturerName":"협력업체"},
+                      "productAttributes":[{"attributeSeq":10011015,"attributeValueSeq":10040059}],"purchaseReviewInfo":{"purchaseReviewExposure":true},
+                      "optionInfo":{"optionCombinations":[{"id":59836117729,"optionName1":"그레이"}]},"seoInfo":{"sellerTags":[{"text":"옛태그"}]},
+                      "sellerCodeInfo":{"sellerManagementCode":"OLD"},"manufactureDate":"2026-08-01"}},
+                     "smartstoreChannelProduct":{"naverShoppingRegistration":true,"channelProductDisplayStatusType":"ON","bbsSeq":3394}}""");
             default -> send(ex, 404, "{\"message\":\"not found " + path + "\"}");
         }
     }

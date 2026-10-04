@@ -93,7 +93,10 @@ public class OpsService {
             throw new ConflictException("승인된 상품만 다시 등록할 수 있습니다 (현재 " + p.getStatus() + ")");
         }
         jobs.retry(id);
-        listings.findById(j.getChannelListingId()).ifPresent(l -> l.setStatus(com.autoreg.channel.ListingStatus.PENDING));
+        // 이미 등록된 행(상품번호 있음)은 되돌리지 않는다. 그대로 두면 워커가 등록 없이 재조회 검증만 한다
+        listings.findById(j.getChannelListingId())
+                .filter(l -> l.getStatus() != com.autoreg.channel.ListingStatus.COMPLETED)
+                .ifPresent(l -> l.setStatus(com.autoreg.channel.ListingStatus.PENDING));
         return job(id);
     }
 

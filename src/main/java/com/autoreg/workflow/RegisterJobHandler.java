@@ -82,6 +82,12 @@ public class RegisterJobHandler {
             return;
         }
         RegistrationContext ctx = prep.ctx();
+        if (prep.verifyOnly() != null) {
+            // 이미 등록된 상품. 다시 POST 하지 않고 재조회 검증만 한다
+            jobs.step(job.getId(), "VERIFY", "등록된 상품 " + prep.verifyOnly() + " 재조회");
+            verifyAndFinish(job, prep, prep.verifyOnly(), prep.lastResponse());
+            return;
+        }
         try {
             jobs.step(job.getId(), "LOOKUP", "판매자 상품코드로 기존 등록 확인");
             Optional<String> existing = prep.adapter().findExisting(ctx);
@@ -112,14 +118,30 @@ public class RegisterJobHandler {
 
             jobs.step(job.getId(), "REGISTER", "상품 등록 요청");
             ChannelAdapter.Result result = prep.adapter().register(ctx, uploaded);
+            // 상품번호부터 저장한다. 이후 어떤 실패가 나도 재시도가 다시 등록하지 않게
             complete(prep.listingId(), result.channelProductNo(), result.rawResponse());
-            jobs.succeed(job.getId(), "등록 완료: 상품번호 " + result.channelProductNo());
+            jobs.step(job.getId(), "VERIFY", "상품번호 " + result.channelProductNo() + " 재조회 검증");
+            verifyAndFinish(job, prep, result.channelProductNo(), result.rawResponse());
         } catch (ChannelException e) {
             if (e.rawResponse() != null) {
                 tx.executeWithoutResult(s -> listings.findById(prep.listingId()).ifPresent(l -> l.setLastResponse(e.rawResponse())));
             }
             throw e.retryable() ? JobException.retryable(e.getMessage(), e.retryAfter()) : JobException.invalid(e.getMessage());
         }
+    }
+
+    private void verifyAndFinish(Job job, Prepared prep, String productNo, Map<String, Object> raw) {
+        Optional<String> problem = prep.adapter().verify(prep.ctx(), productNo, raw);
+        tx.executeWithoutResult(s -> listings.findById(prep.listingId()).ifPresent(l -> {
+            Map<String, Object> next = new java.util.LinkedHashMap<>(l.getLastResponse() == null ? Map.of() : l.getLastResponse());
+            next.put("verification", problem.<Map<String, Object>>map(p -> Map.of("ok", false, "message", p)).orElse(Map.of("ok", true)));
+            l.setLastResponse(next);
+        }));
+        if (problem.isPresent()) {
+            throw JobException.invalid("등록은 됐지만 재조회 검증 실패 (상품번호 " + productNo + "): " + problem.get()
+                    + " — 다시 시도하면 등록 없이 검증만 합니다");
+        }
+        jobs.succeed(job.getId(), "등록 완료·재조회 확인: 상품번호 " + productNo);
     }
 
     /** 작업 실패 결과를 등록 행 상태에 반영한다 */
@@ -131,13 +153,19 @@ public class RegisterJobHandler {
         }));
     }
 
-    private record Prepared(Long listingId, ChannelAdapter adapter, RegistrationContext ctx) {}
+    /** verifyOnly: 이미 등록됐지만 검증이 안 끝난 상품번호 (있으면 등록하지 않는다) */
+    private record Prepared(Long listingId, ChannelAdapter adapter, RegistrationContext ctx, String verifyOnly,
+            Map<String, Object> lastResponse) {}
 
     private Prepared prepare(Job job) {
         ChannelListing listing = listings.findById(job.getChannelListingId())
                 .orElseThrow(() -> JobException.invalid("등록 행이 없습니다"));
+        String verifyOnly = null;
         if (listing.getStatus() == ListingStatus.COMPLETED) {
-            return null;
+            if (!verificationFailed(listing)) {
+                return null;
+            }
+            verifyOnly = listing.getChannelProductNo();
         }
         Product product = products.findByIdAndTenantId(listing.getProductId(), listing.getTenantId())
                 .orElseThrow(() -> JobException.invalid("상품이 없습니다"));
@@ -153,18 +181,27 @@ public class RegisterJobHandler {
         if (adapter == null) {
             throw JobException.invalid(account.getChannel() + " 어댑터가 없습니다");
         }
-        String categoryId = mappings.findByTenantIdAndChannelAndCategory(listing.getTenantId(), account.getChannel(),
-                product.getCategory()).map(m -> m.getChannelCategoryId())
+        com.autoreg.channel.CategoryMapping mapping = mappings.findByTenantIdAndChannelAndCategory(listing.getTenantId(),
+                account.getChannel(), product.getCategory())
                 .orElseThrow(() -> JobException.invalid("카테고리 매핑이 없습니다: " + product.getCategory() + " → "
                         + account.getChannel() + " (판매자 관리 화면에서 추가)"));
+        String categoryId = mapping.getChannelCategoryId();
         // 트랜잭션 밖에서 쓰므로 지연 로딩 컬렉션을 미리 읽어 둔다
         product.getOptions().size();
         product.getMeasurements().size();
         product.getImages().size();
         Tenant tenant = tenants.get(listing.getTenantId());
-        listing.setStatus(ListingStatus.REGISTERING);
+        if (verifyOnly == null) {
+            listing.setStatus(ListingStatus.REGISTERING);
+        }
         return new Prepared(listing.getId(), adapter, new RegistrationContext(tenant, product, account,
-                accountService.credentials(account), categoryId, listing.getIdempotencyKey()));
+                accountService.credentials(account), categoryId, mapping.getReference(), listing.getIdempotencyKey()),
+                verifyOnly, listing.getLastResponse());
+    }
+
+    static boolean verificationFailed(ChannelListing l) {
+        return l.getLastResponse() != null && l.getLastResponse().get("verification") instanceof Map<?, ?> v
+                && Boolean.FALSE.equals(v.get("ok"));
     }
 
     private void complete(Long listingId, String productNo, Map<String, Object> raw) {

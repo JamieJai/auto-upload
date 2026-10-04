@@ -184,6 +184,13 @@ class WorkflowIntegrationTest {
         channel.existingFor = null;
         channel.uploads.set(0);
         channel.registers.set(0);
+        naver.readbackMismatch = false;
+        synchronized (naver.requests) {
+            naver.requests.clear();
+        }
+        naver.registerBodies.clear();
+        naver.uploadedTypes.clear();
+        naver.existingCode = null;
         tenant = id(mvc.perform(json(post("/api/tenants"), """
                 {"code":"shop-a","name":"샵에이","brandTone":"반말, 이모지 금지",
                  "noticeDefaults":{"manufacturer":"(주)샵에이","origin_country":"대한민국","wash_care":"드라이",
@@ -328,7 +335,7 @@ class WorkflowIntegrationTest {
         // 템플릿 없이 승인하면 설정 부족으로 '수정 필요'
         approved("NV1");
         worker.poll();
-        assertThat(jdbc.queryForObject("SELECT last_error FROM job WHERE type='REGISTER'", String.class)).contains("템플릿");
+        assertThat(jdbc.queryForObject("SELECT last_error FROM job WHERE type='REGISTER'", String.class)).contains("레퍼런스");
 
         // 기존 상품에서 배송·원산지를 가져온다. dryRun 은 기본 켜짐
         mvc.perform(json(post("/api/tenants/{t}/channel-accounts/{id}/template", tenant, accId), """
@@ -366,6 +373,57 @@ class WorkflowIntegrationTest {
                 .isEqualTo("13700000001");
         assertThat(naver.registerBodies).hasSize(1);
         assertThat(naver.requests.stream().filter(r -> r.contains("product-images")).count()).isEqualTo(uploadsAfterDryRun);
+    }
+
+    @Test
+    void categoryReferenceAndReadbackVerification() throws Exception {
+        Long cafe = jdbc.queryForObject("SELECT id FROM channel_account WHERE channel='CAFE24'", Long.class);
+        mvc.perform(json(put("/api/tenants/{t}/channel-accounts/{id}", tenant, cafe), """
+                {"channel":"CAFE24","displayName":"off","active":false}"""));
+        String acc = mvc.perform(json(post("/api/tenants/{t}/channel-accounts", tenant), """
+                {"channel":"SMARTSTORE","displayName":"cp","settings":{"dryRun":false},"credentials":{"clientId":"%s","clientSecret":"%s"}}"""
+                .formatted(com.autoreg.channel.naver.FakeNaver.CLIENT_ID, com.autoreg.channel.naver.FakeNaver.CLIENT_SECRET)))
+                .andReturn().getResponse().getContentAsString();
+        String map = mvc.perform(json(put("/api/tenants/{t}/category-mappings", tenant), """
+                {"channel":"SMARTSTORE","category":"원피스","channelCategoryId":"50000807"}""")).andReturn().getResponse().getContentAsString();
+        long mapId = ((Number) JsonPath.read(map, "$.id")).longValue();
+
+        // 테스트 상품은 레퍼런스로 거부, 일반 상품은 허용
+        mvc.perform(json(post("/api/tenants/{t}/category-mappings/{id}/reference", tenant, mapId), """
+                {"originProductNo":"124"}""")).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("테스트")));
+        mvc.perform(json(post("/api/tenants/{t}/category-mappings/{id}/reference", tenant, mapId), """
+                {"originProductNo":"123"}""")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.referenceName").value("린넨 셔츠 롱원피스"))
+                .andExpect(jsonPath("$.reference.detailAttribute.productAttributes").isArray());
+
+        // 재조회 결과가 다르면: 상품번호는 저장, 작업은 '수정 필요', 재시도는 등록 없이 검증만
+        naver.readbackMismatch = true;
+        approved("RB1");
+        worker.poll();
+        Long jobId = jdbc.queryForObject("SELECT id FROM job WHERE type='REGISTER'", Long.class);
+        mvc.perform(get("/api/jobs/{id}", jobId))
+                .andExpect(jsonPath("$.job.status").value("FAILED_INVALID"))
+                .andExpect(jsonPath("$.job.lastError").value(containsString("재조회 검증 실패")))
+                .andExpect(jsonPath("$.listing.channelProductNo").value("13700000001"))
+                .andExpect(jsonPath("$.listing.lastResponse.verification.ok").value(false));
+        String sent = naver.registerBodies.get(naver.registerBodies.size() - 1);
+        assertThat(sent).contains("\"productAttributes\"").doesNotContain("bbsSeq").doesNotContain("customerBenefit")
+                .doesNotContain("옛태그").doesNotContain("59836117729");
+        int registers = naver.registerBodies.size();
+
+        naver.readbackMismatch = false;
+        mvc.perform(post("/api/jobs/{id}/retry", jobId));
+        worker.poll();
+        mvc.perform(get("/api/jobs/{id}", jobId))
+                .andExpect(jsonPath("$.job.status").value("SUCCEEDED"))
+                .andExpect(jsonPath("$.listing.lastResponse.verification.ok").value(true));
+        assertThat(naver.registerBodies).hasSize(registers);
+
+        // 카테고리 ID 를 바꾸면 레퍼런스가 지워진다
+        mvc.perform(json(put("/api/tenants/{t}/category-mappings", tenant), """
+                {"channel":"SMARTSTORE","category":"원피스","channelCategoryId":"50000999"}"""))
+                .andExpect(jsonPath("$.reference").doesNotExist());
     }
 
     @Test

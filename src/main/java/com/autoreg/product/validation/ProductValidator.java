@@ -25,6 +25,12 @@ public class ProductValidator {
 
     public static final int NAME_MAX = 100;
     public static final int KEYWORDS_MAX = 10;
+    /** 스마트스토어 판매자 태그: 각각 UTF-8 30바이트 미만 (한글은 글자당 3바이트라 공백 포함 9자 정도) */
+    public static final int TAG_MAX_BYTES = 30;
+
+    public static boolean tagFits(String tag) {
+        return tag != null && !tag.isBlank() && tag.getBytes(java.nio.charset.StandardCharsets.UTF_8).length < TAG_MAX_BYTES;
+    }
 
     public List<ValidationIssue> validate(Product p, ValidationPhase phase) {
         List<ValidationIssue> issues = new ArrayList<>();
@@ -132,6 +138,11 @@ public class ProductValidator {
         }
         if (p.getSearchKeywords().size() > KEYWORDS_MAX) {
             issues.add(new ValidationIssue("searchKeywords", "TOO_MANY", "검색키워드는 " + KEYWORDS_MAX + "개 이하여야 합니다"));
+        }
+        List<String> tooLong = p.getSearchKeywords().stream().filter(k -> !tagFits(k)).toList();
+        if (!tooLong.isEmpty()) {
+            issues.add(new ValidationIssue("searchKeywords", "TOO_LONG_BYTES",
+                    "검색키워드는 각각 " + TAG_MAX_BYTES + "바이트 미만이어야 합니다 (한글 약 9자): " + String.join(", ", tooLong)));
         }
     }
 

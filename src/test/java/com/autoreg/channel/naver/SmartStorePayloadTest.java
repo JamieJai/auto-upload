@@ -38,7 +38,7 @@ class SmartStorePayloadTest {
                 .containsEntry("stockQuantity", 20);
         assertThat((Map<String, Object>) detail.get("sellerCodeInfo")).containsEntry("sellerManagementCode", "SS2609001");
         assertThat((Map<String, Object>) detail.get("naverShoppingSearchInfo")).containsEntry("brandName", "charming_point_")
-                .doesNotContainKey("modelName");
+                .containsEntry("modelName", p.getName());
 
         Map<String, Object> notice = (Map<String, Object>) ((Map<String, Object>) detail.get("productInfoProvidedNotice")).get("wear");
         assertThat(notice).containsEntry("material", "린넨 55%, 레이온 45%").containsEntry("color", "딥 블랙/블랙/아이보리")

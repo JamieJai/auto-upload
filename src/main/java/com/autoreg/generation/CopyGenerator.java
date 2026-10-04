@@ -104,7 +104,7 @@ public class CopyGenerator {
         }
         if (fields.contains(TextField.SEARCH_KEYWORDS)) {
             sb.append("- searchKeywords: 검색키워드 5~").append(ProductValidator.KEYWORDS_MAX)
-                    .append("개. 각 15자 이하, 띄어쓰기 없는 검색어 위주, 브랜드명 금지\n");
+                    .append("개. 각각 한글 9자(UTF-8 29바이트) 이하, 띄어쓰기 없는 검색어 위주, 브랜드명 금지\n");
         }
         if (fields.contains(TextField.OPTION_DISPLAY)) {
             sb.append("- optionDisplays: 색상마다 {color: 입력 색상 그대로, display: 고객에게 보일 색상명 12자 이하}\n");
@@ -158,7 +158,7 @@ public class CopyGenerator {
             LinkedHashSet<String> kws = new LinkedHashSet<>();
             out.path("searchKeywords").forEach(n -> {
                 String k = oneLine(n.asString(""));
-                if (!k.isEmpty() && k.length() <= 30) {
+                if (ProductValidator.tagFits(k)) {
                     kws.add(k);
                 }
             });

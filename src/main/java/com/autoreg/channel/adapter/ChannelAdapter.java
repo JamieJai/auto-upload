@@ -26,6 +26,14 @@ public interface ChannelAdapter {
     /** 등록. images 는 업로드 순서(main, sub, detail, size)대로 채널 URL */
     Result register(RegistrationContext ctx, List<UploadedImage> images);
 
+    /**
+     * 등록 직후 재조회 검증. 문제가 없으면 empty, 있으면 사유. 예외를 던지지 않는다
+     * (상품번호를 먼저 저장해 중복 등록을 막아야 하므로). 재시도 때는 등록 없이 이것만 다시 부른다.
+     */
+    default Optional<String> verify(RegistrationContext ctx, String channelProductNo, Map<String, Object> rawResponse) {
+        return Optional.empty();
+    }
+
     record UploadedImage(ProductImage image, String channelUrl) {}
 
     record Result(String channelProductNo, Map<String, Object> rawResponse) {}

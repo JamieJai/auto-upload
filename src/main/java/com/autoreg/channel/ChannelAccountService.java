@@ -87,6 +87,30 @@ public class ChannelAccountService {
         return a;
     }
 
+    /** 품목 레퍼런스: 같은 판매자의 기존 상품에서 판매 설정 스냅샷을 만든다 */
+    @Transactional
+    public CategoryMapping importReference(Long tenantId, Long mappingId, String originProductNo, boolean force,
+            com.autoreg.channel.adapter.SmartStoreAdapter smartStore) {
+        CategoryMapping m = mappings.findByIdAndTenantId(mappingId, tenantId)
+                .orElseThrow(() -> new NotFoundException("category mapping", mappingId));
+        if (m.getChannel() != Channel.SMARTSTORE) {
+            throw new IllegalArgumentException("스마트스토어 매핑만 레퍼런스를 가져올 수 있습니다");
+        }
+        ChannelAccount a = accounts.findByTenantIdAndChannel(tenantId, Channel.SMARTSTORE)
+                .orElseThrow(() -> new IllegalArgumentException("이 판매자에 스마트스토어 계정이 없습니다"));
+        Map<String, Object> snap = smartStore.reference(credentials(a), originProductNo.trim(), force);
+        Object leaf = snap.get("leafCategoryId");
+        if (leaf != null && !String.valueOf(leaf).equals(m.getChannelCategoryId())) {
+            throw new IllegalArgumentException("레퍼런스 카테고리(" + leaf + ")가 이 매핑의 카테고리(" + m.getChannelCategoryId()
+                    + ")와 다릅니다. 같은 품목 상품을 고르세요");
+        }
+        m.setReferenceProductNo(originProductNo.trim());
+        m.setReferenceName(String.valueOf(snap.getOrDefault("sourceName", "")));
+        m.setReference(snap);
+        m.setReferenceFetchedAt(java.time.OffsetDateTime.now());
+        return m;
+    }
+
     public List<CategoryMapping> mappings(Long tenantId) {
         tenants.get(tenantId);
         return mappings.findByTenantIdOrderByChannelAscCategoryAsc(tenantId);
@@ -105,7 +129,15 @@ public class ChannelAccountService {
                     n.setCategory(category);
                     return n;
                 });
-        m.setChannelCategoryId(req.channelCategoryId().trim());
+        String nextId = req.channelCategoryId().trim();
+        if (m.getChannelCategoryId() != null && !m.getChannelCategoryId().equals(nextId)) {
+            // 카테고리가 바뀌면 레퍼런스(카테고리 속성 포함)가 맞지 않는다
+            m.setReference(null);
+            m.setReferenceProductNo(null);
+            m.setReferenceName(null);
+            m.setReferenceFetchedAt(null);
+        }
+        m.setChannelCategoryId(nextId);
         return mappings.save(m);
     }
 

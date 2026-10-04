@@ -93,10 +93,15 @@ public class NaverCommerceClient {
             throw ChannelException.invalid("이미지 파일을 읽을 수 없습니다: " + file.getFileName());
         }
         pace(c.clientId());
+        String name = file.getFileName().toString();
+        // 네이버는 JPG·GIF·PNG·BMP 만 받는다. WebP 는 JPG 로 바꿔 올린다
+        if (name.toLowerCase(java.util.Locale.ROOT).endsWith(".webp")) {
+            bytes = toJpeg(bytes, name);
+            name = name.substring(0, name.length() - 5) + ".jpg";
+        }
         String boundary = "----autoreg" + UUID.randomUUID();
         ByteArrayOutputStream body = new ByteArrayOutputStream();
-        String name = file.getFileName().toString();
-        String type = name.endsWith(".png") ? "image/png" : name.endsWith(".webp") ? "image/webp" : "image/jpeg";
+        String type = name.endsWith(".png") ? "image/png" : "image/jpeg";
         body.writeBytes(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"imageFiles\"; filename=\"" + name
                 + "\"\r\nContent-Type: " + type + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
         body.writeBytes(bytes);
@@ -113,6 +118,41 @@ public class NaverCommerceClient {
     /** 상품 등록. 응답 원문을 돌려준다 (originProductNo, smartstoreChannelProductNo) */
     public Map<String, Object> registerProduct(Credentials c, Map<String, Object> payload) {
         return toMap(send(c, "POST", "/v2/products", payload));
+    }
+
+    /** 채널상품 조회 (등록 후 재조회 검증용) */
+    public Map<String, Object> getChannelProduct(Credentials c, String channelProductNo) {
+        return toMap(send(c, "GET", "/v2/products/channel-products/" + URLEncoder.encode(channelProductNo, StandardCharsets.UTF_8), null));
+    }
+
+    static byte[] toJpeg(byte[] webp, String name) {
+        try {
+            java.awt.image.BufferedImage src = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(webp));
+            if (src == null) {
+                throw ChannelException.invalid("WebP 이미지를 읽을 수 없습니다: " + name);
+            }
+            java.awt.image.BufferedImage rgb = new java.awt.image.BufferedImage(src.getWidth(), src.getHeight(),
+                    java.awt.image.BufferedImage.TYPE_INT_RGB);
+            java.awt.Graphics2D g = rgb.createGraphics();
+            g.setColor(java.awt.Color.WHITE);
+            g.fillRect(0, 0, rgb.getWidth(), rgb.getHeight());
+            g.drawImage(src, 0, 0, null);
+            g.dispose();
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            javax.imageio.ImageWriter w = javax.imageio.ImageIO.getImageWritersByFormatName("jpg").next();
+            javax.imageio.ImageWriteParam param = w.getDefaultWriteParam();
+            param.setCompressionMode(javax.imageio.ImageWriteParam.MODE_EXPLICIT);
+            param.setCompressionQuality(0.92f);
+            try (javax.imageio.stream.ImageOutputStream ios = javax.imageio.ImageIO.createImageOutputStream(out)) {
+                w.setOutput(ios);
+                w.write(null, new javax.imageio.IIOImage(rgb, null, null), param);
+            } finally {
+                w.dispose();
+            }
+            return out.toByteArray();
+        } catch (IOException e) {
+            throw ChannelException.invalid("WebP → JPG 변환 실패: " + name);
+        }
     }
 
     /** 원상품 조회 (템플릿 가져오기용, 읽기 전용) */

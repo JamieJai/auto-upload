@@ -34,9 +34,14 @@ public final class ChannelDtos {
             @NotBlank @Size(max = 100) String category,
             @NotBlank @Size(max = 50) String channelCategoryId) {}
 
-    public record CategoryMappingResponse(Long id, Channel channel, String category, String channelCategoryId) {
+    public record CategoryMappingResponse(Long id, Channel channel, String category, String channelCategoryId,
+            String referenceProductNo, String referenceName, OffsetDateTime referenceFetchedAt, Map<String, Object> reference) {
         static CategoryMappingResponse of(CategoryMapping m) {
-            return new CategoryMappingResponse(m.getId(), m.getChannel(), m.getCategory(), m.getChannelCategoryId());
+            return new CategoryMappingResponse(m.getId(), m.getChannel(), m.getCategory(), m.getChannelCategoryId(),
+                    m.getReferenceProductNo(), m.getReferenceName(), m.getReferenceFetchedAt(), m.getReference());
         }
     }
+
+    /** force: 상품명에 테스트·세일 등이 있어도 레퍼런스로 쓴다 */
+    public record ReferenceRequest(@NotBlank String originProductNo, Boolean force) {}
 }

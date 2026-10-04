@@ -14,6 +14,8 @@ public record RegistrationContext(
         ChannelAccount account,
         Map<String, String> credentials,
         String channelCategoryId,
+        /** 품목 레퍼런스 스냅샷 (없으면 null) */
+        Map<String, Object> reference,
         UUID idempotencyKey) {
 
     @Override
