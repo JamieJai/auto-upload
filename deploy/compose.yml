@@ -24,7 +24,15 @@ services:
   backend:
     <<: *app
     build: ./backend
-    ports: ["8080:8080"]
+    # 외부 접근은 nginx(80)로만. 8080 은 auto-app 안에서만 연다
+    ports: ["127.0.0.1:8080:8080"]
+
+  nginx:
+    build: ./frontend
+    image: autoreg-frontend:latest
+    restart: unless-stopped
+    ports: ["80:80"]
+    depends_on: [backend]
 
   worker:
     <<: *app

@@ -97,7 +97,7 @@ public class CopyGenerator {
         sb.append("\n## 만들 것\n");
         if (fields.contains(TextField.NAME)) {
             sb.append("- name: 상품명. 20~50자, 최대 ").append(ProductValidator.NAME_MAX)
-                    .append("자. 핵심 소재·핏·아이템명을 앞에. 색상·사이즈 나열과 특수문자 남발 금지\n");
+                    .append("자. 핵심 소재·핏·아이템명을 앞에. 색상·사이즈 나열, 혼용률 숫자, 특수문자 남발 금지\n");
         }
         if (fields.contains(TextField.DESCRIPTION)) {
             sb.append("- description: 상세설명. 300~800자 일반 텍스트(HTML·마크다운 금지). 착용감·연출·코디 위주, 문단은 줄바꿈으로\n");
