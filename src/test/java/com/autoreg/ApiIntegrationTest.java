@@ -40,6 +40,14 @@ class ApiIntegrationTest {
     @ServiceConnection
     static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:16");
 
+    static java.nio.file.Path imageRoot;
+
+    @org.springframework.test.context.DynamicPropertySource
+    static void imageRoot(org.springframework.test.context.DynamicPropertyRegistry r) throws Exception {
+        imageRoot = java.nio.file.Files.createTempDirectory("autoreg-images");
+        r.add("autoreg.image-root", () -> imageRoot.toString());
+    }
+
     @Autowired
     WebApplicationContext context;
 
@@ -162,6 +170,104 @@ class ApiIntegrationTest {
         long t = createTenant("shop-a");
         mvc.perform(json(post("/api/tenants/{t}/products", t), """
                 {"code":"SS1","salePrice":-1}""")).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void uploadMatchesByFilenameAndParksUnknownFiles() throws Exception {
+        long t = createTenant("shop-a");
+        long b = createTenant("shop-b");
+        String created = mvc.perform(json(post("/api/tenants/{t}/products", t), """
+                {"code":"SS2609001"}""")).andReturn().getResponse().getContentAsString();
+        long id = ((Number) JsonPath.read(created, "$.id")).longValue();
+        // 다른 판매자에 같은 코드가 있어도 섞이지 않는다
+        mvc.perform(json(post("/api/tenants/{t}/products", b), """
+                {"code":"SS2609001"}""")).andExpect(status().isCreated());
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .multipart("/api/tenants/{t}/images", t)
+                        .file(png("SS2609001_main.png", 1200, 1600))
+                        .file(png("SS2609001_detail_02.png", 800, 800))
+                        .file(png("SS9999999_main.png", 100, 100))
+                        .file(png("random.png", 100, 100))
+                        .file(new org.springframework.mock.web.MockMultipartFile("files", "SS2609001_sub.png",
+                                "image/png", "not an image".getBytes())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.matched", hasSize(2)))
+                .andExpect(jsonPath("$.unmatched", hasSize(3)));
+
+        assertThat(imageRoot.resolve("shop-a/SS2609001/main_01.png")).exists();
+        assertThat(imageRoot.resolve("shop-a/_thumbs/SS2609001/main_01.jpg")).exists();
+        assertThat(imageRoot.resolve("shop-a/_unmatched/random.png")).exists();
+        assertThat(imageRoot.resolve("shop-b/SS2609001")).doesNotExist();
+        java.awt.image.BufferedImage thumb = javax.imageio.ImageIO.read(imageRoot.resolve("shop-a/_thumbs/SS2609001/main_01.jpg").toFile());
+        assertThat(thumb.getHeight()).isEqualTo(400);
+
+        mvc.perform(get("/api/tenants/{t}/products/{id}", t, id))
+                .andExpect(jsonPath("$.images", hasSize(2)))
+                .andExpect(jsonPath("$.images[?(@.slot=='main')].width").value(1200));
+
+        mvc.perform(get("/api/tenants/{t}/images/unmatched", t))
+                .andExpect(jsonPath("$[*].filename", containsInAnyOrder("SS9999999_main.png", "random.png")));
+
+        mvc.perform(json(post("/api/tenants/{t}/images/unmatched/assign", t), """
+                {"filename":"random.png","productId":%d,"slot":"size","seq":1}""".formatted(id)))
+                .andExpect(status().isOk());
+        assertThat(imageRoot.resolve("shop-a/_unmatched/random.png")).doesNotExist();
+        assertThat(imageRoot.resolve("shop-a/SS2609001/size_01.png")).exists();
+
+        // 경로 탈출 시도는 파일명만 남기고 처리한다
+        mvc.perform(delete("/api/tenants/{t}/images/unmatched", t).param("filename", "../../shop-b/x.png"))
+                .andExpect(status().isNotFound());
+        mvc.perform(get("/files/shop-a/_thumbs/SS2609001/main_01.jpg")).andExpect(status().isOk());
+    }
+
+    @Test
+    void excelPreviewThenImport() throws Exception {
+        long t = createTenant("shop-a");
+        mvc.perform(json(post("/api/tenants/{t}/products", t), """
+                {"code":"EXISTS"}""")).andExpect(status().isCreated());
+        byte[] file = com.autoreg.excel.ExcelTestFiles.filled(new Object[][] {
+                com.autoreg.excel.ExcelTestFiles.product("SS1", 39000, "블랙,아이보리", "S,M", 3, "린넨 100%"),
+                com.autoreg.excel.ExcelTestFiles.product("EXISTS", 1000, "블랙", "S", 1, "면"),
+                com.autoreg.excel.ExcelTestFiles.product("SS2", "x", "블랙", "S", 1, "면")},
+                new Object[][] {{"SS1", "S", 100}, {"SS1", "M", 102}});
+        var part = new org.springframework.mock.web.MockMultipartFile("file", "a.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", file);
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .multipart("/api/tenants/{t}/excel/preview", t).file(part))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(3))
+                .andExpect(jsonPath("$.importable").value(1))
+                .andExpect(jsonPath("$.rows[0].warnings[*].field", not(hasItem("notice.manufacturer"))))
+                .andExpect(jsonPath("$.rows[0].warnings[*].field", hasItem("notice.wash_care")));
+        // 미리보기는 아무것도 만들지 않는다
+        mvc.perform(get("/api/tenants/{t}/products", t)).andExpect(jsonPath("$.page.totalElements").value(1));
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .multipart("/api/tenants/{t}/excel/import", t).file(part))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.created").value(1))
+                .andExpect(jsonPath("$.skipped").value(2));
+        String list = mvc.perform(get("/api/tenants/{t}/products?status=DRAFT&sort=code", t))
+                .andReturn().getResponse().getContentAsString();
+        java.util.List<Number> ids = JsonPath.read(list, "$.content[?(@.code=='SS1')].id");
+        long id = ids.get(0).longValue();
+        mvc.perform(get("/api/tenants/{t}/products/{id}", t, id))
+                .andExpect(jsonPath("$.options", hasSize(4)))
+                .andExpect(jsonPath("$.measurements", hasSize(2)))
+                .andExpect(jsonPath("$.notice.manufacturer").value("(주)샵에이"));
+
+        mvc.perform(get("/api/excel/template")).andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string("Content-Disposition", org.hamcrest.Matchers.containsString("attachment")));
+    }
+
+    private static org.springframework.mock.web.MockMultipartFile png(String name, int w, int h) throws Exception {
+        var img = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        var out = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(img, "png", out);
+        return new org.springframework.mock.web.MockMultipartFile("files", name, "image/png", out.toByteArray());
     }
 
     private long createTenant(String code) throws Exception {

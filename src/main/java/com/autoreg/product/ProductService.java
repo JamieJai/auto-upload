@@ -152,6 +152,16 @@ public class ProductService {
         return validator.validate(find(tenantId, id), phase);
     }
 
+    /** 저장하지 않는 상품. 엑셀 미리보기 검증용으로 생성 시와 같은 규칙(기본값 채우기 포함)을 적용한다 */
+    public static Product transientProduct(Tenant tenant, ProductRequest req) {
+        Product p = new Product();
+        p.setTenantId(tenant.getId());
+        p.setCode(req.code());
+        applyFields(p, req);
+        applyNoticeDefaults(p, tenant);
+        return p;
+    }
+
     private Product editable(Long tenantId, Long id) {
         Product p = find(tenantId, id);
         if (!p.getStatus().editable()) {

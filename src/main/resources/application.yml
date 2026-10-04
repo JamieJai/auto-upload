@@ -31,3 +31,10 @@ management:
 autoreg:
   master-key: ${AUTOREG_MASTER_KEY:}
   image-root: ${AUTOREG_IMAGE_ROOT:/data/images}
+
+---
+spring:
+  servlet:
+    multipart:
+      max-file-size: 30MB
+      max-request-size: 300MB
