@@ -27,3 +27,7 @@ management:
   endpoint:
     health:
       show-details: always
+
+autoreg:
+  master-key: ${AUTOREG_MASTER_KEY:}
+  image-root: ${AUTOREG_IMAGE_ROOT:/data/images}
