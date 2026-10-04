@@ -1,0 +1,389 @@
+package com.autoreg;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasItem;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.io.ByteArrayOutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.postgresql.PostgreSQLContainer;
+
+import com.autoreg.channel.Channel;
+import com.autoreg.channel.adapter.ChannelAdapter;
+import com.autoreg.channel.adapter.ChannelException;
+import com.autoreg.channel.adapter.RegistrationContext;
+import com.autoreg.llm.LlmClient;
+import com.autoreg.product.ProductImage;
+import com.autoreg.workflow.JobWorker;
+import com.jayway.jsonpath.JsonPath;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
+
+@SpringBootTest(properties = {
+        "autoreg.master-key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "management.health.redis.enabled=false",
+        "autoreg.worker.poll-ms=86400000"})
+@ActiveProfiles("worker")
+@Testcontainers
+class WorkflowIntegrationTest {
+
+    @Container
+    @ServiceConnection
+    static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:16");
+
+    static Path imageRoot;
+
+    @DynamicPropertySource
+    static void props(DynamicPropertyRegistry r) throws Exception {
+        imageRoot = Files.createTempDirectory("autoreg-wf");
+        r.add("autoreg.image-root", () -> imageRoot.toString());
+    }
+
+    /** 요청된 필드만 채워 돌려주는 LLM. mode 로 실패를 흉내 낸다 */
+    static class FakeLlm implements LlmClient {
+        final JsonMapper json = JsonMapper.builder().build();
+        volatile String mode = "ok";
+        final AtomicInteger calls = new AtomicInteger();
+        volatile String lastPrompt;
+
+        @Override
+        public JsonNode generate(String system, String prompt, String schema) {
+            calls.incrementAndGet();
+            lastPrompt = prompt;
+            ObjectNode n = json.createObjectNode();
+            if (mode.equals("bad")) {
+                return n.put("name", "").put("description", "짧음");
+            }
+            if (schema.contains("\"name\"")) {
+                n.put("name", "AI 린넨 원피스");
+            }
+            if (schema.contains("\"description\"")) {
+                n.put("description", "가볍고 시원한 린넨 원피스입니다. ".repeat(5));
+            }
+            if (schema.contains("\"searchKeywords\"")) {
+                n.putArray("searchKeywords").add("린넨원피스").add("여름원피스").add("린넨원피스");
+            }
+            if (schema.contains("\"optionDisplays\"")) {
+                n.putArray("optionDisplays").addObject().put("color", "블랙").put("display", "딥 블랙");
+            }
+            // 스키마에 없는 금지 항목을 섞어도 반영되면 안 된다
+            n.put("material", "실크 100%");
+            return n;
+        }
+    }
+
+    /** CAFE24 자리에 꽂는 가짜 채널 */
+    static class FakeChannel implements ChannelAdapter {
+        final AtomicInteger uploads = new AtomicInteger();
+        final AtomicInteger registers = new AtomicInteger();
+        final List<String> failNext = new ArrayList<>();
+        volatile String existingFor;
+
+        @Override
+        public Channel channel() {
+            return Channel.CAFE24;
+        }
+
+        @Override
+        public Optional<String> findExisting(RegistrationContext ctx) {
+            return ctx.product().getCode().equals(existingFor) ? Optional.of("EXIST-1") : Optional.empty();
+        }
+
+        @Override
+        public String uploadImage(RegistrationContext ctx, ProductImage image, Path file) {
+            assertThat(file).exists();
+            uploads.incrementAndGet();
+            return "https://cdn.example/" + image.getSlot().value() + image.getSeq();
+        }
+
+        @Override
+        public Result register(RegistrationContext ctx, List<UploadedImage> images) {
+            if (!failNext.isEmpty()) {
+                String kind = failNext.remove(0);
+                throw new ChannelException(kind + " failure token=abc123", kind.equals("retry"), null,
+                        java.util.Map.of("code", kind));
+            }
+            registers.incrementAndGet();
+            assertThat(ctx.credentials()).containsEntry("mallId", "shop");
+            assertThat(images.get(0).image().getSlot().value()).isEqualTo("main");
+            return new Result("C24-" + ctx.product().getCode(), java.util.Map.of("ok", true, "category", ctx.channelCategoryId()));
+        }
+    }
+
+    @TestConfiguration
+    static class Fakes {
+        @Bean
+        @Primary
+        FakeLlm fakeLlm() {
+            return new FakeLlm();
+        }
+
+        @Bean
+        FakeChannel fakeChannel() {
+            return new FakeChannel();
+        }
+    }
+
+    @Autowired WebApplicationContext context;
+    @Autowired JdbcTemplate jdbc;
+    @Autowired JobWorker worker;
+    @Autowired FakeLlm llm;
+    @Autowired FakeChannel channel;
+
+    MockMvc mvc;
+    long tenant;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        mvc = MockMvcBuilders.webAppContextSetup(context).build();
+        jdbc.execute("TRUNCATE tenant, channel_account, category_mapping, product, job RESTART IDENTITY CASCADE");
+        llm.mode = "ok";
+        channel.failNext.clear();
+        channel.existingFor = null;
+        channel.uploads.set(0);
+        channel.registers.set(0);
+        tenant = id(mvc.perform(json(post("/api/tenants"), """
+                {"code":"shop-a","name":"샵에이","brandTone":"반말, 이모지 금지",
+                 "noticeDefaults":{"manufacturer":"(주)샵에이","origin_country":"대한민국","wash_care":"드라이",
+                   "quality_assurance":"관련 법령에 따름","as_manager":"고객센터","as_phone":"02-000-0000"}}""")));
+        mvc.perform(json(post("/api/tenants/{t}/channel-accounts", tenant), """
+                {"channel":"CAFE24","displayName":"샵에이 카페24","credentials":{"mallId":"shop"}}"""))
+                .andExpect(status().isCreated());
+        mvc.perform(json(put("/api/tenants/{t}/category-mappings", tenant), """
+                {"channel":"CAFE24","category":"원피스","channelCategoryId":"24"}"""));
+    }
+
+    @Test
+    void submitGenerateApproveRegister() throws Exception {
+        long p = completeProduct("SS1");
+        mvc.perform(post("/api/tenants/{t}/products/{id}/submit", tenant, p))
+                .andExpect(jsonPath("$.status").value("GENERATING"));
+        worker.poll();
+        assertThat(llm.lastPrompt).contains("반말, 이모지 금지").contains("린넨 100%").contains("총장 110cm");
+        mvc.perform(get("/api/tenants/{t}/products/{id}", tenant, p))
+                .andExpect(jsonPath("$.status").value("PENDING_APPROVAL"))
+                .andExpect(jsonPath("$.name").value("AI 린넨 원피스"))
+                .andExpect(jsonPath("$.searchKeywords.length()").value(2))
+                .andExpect(jsonPath("$.fieldSources.DESCRIPTION").value("AI"))
+                .andExpect(jsonPath("$.notice.material").value("린넨 100%"));
+
+        mvc.perform(get("/api/approvals")).andExpect(jsonPath("$.content[0].tenantCode").value("shop-a"));
+        mvc.perform(post("/api/tenants/{t}/products/{id}/approve", tenant, p))
+                .andExpect(jsonPath("$.status").value("APPROVED"));
+        worker.poll();
+        assertThat(channel.uploads.get()).isEqualTo(6);
+        assertThat(jdbc.queryForObject("SELECT channel_product_no FROM channel_listing", String.class)).isEqualTo("C24-SS1");
+
+        String jobs = mvc.perform(get("/api/jobs?tenantId={t}", tenant)).andReturn().getResponse().getContentAsString();
+        List<Number> regIds = JsonPath.read(jobs, "$.content[?(@.type=='REGISTER')].id");
+        mvc.perform(get("/api/jobs/{id}", regIds.get(0)))
+                .andExpect(jsonPath("$.job.status").value("SUCCEEDED"))
+                .andExpect(jsonPath("$.listing.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.logs[*].step", hasItem("IMAGES")));
+        mvc.perform(get("/api/dashboard"))
+                .andExpect(jsonPath("$.today.received").value(2))
+                .andExpect(jsonPath("$.today.completed").value(1))
+                .andExpect(jsonPath("$.today.failed").value(0));
+    }
+
+    @Test
+    void retryableFailureBacksOffAndReusesUploadedImages() throws Exception {
+        long p = approved("SS2");
+        channel.failNext.add("retry");
+        worker.poll();
+        assertThat(jdbc.queryForObject("SELECT status FROM job WHERE type='REGISTER'", String.class)).isEqualTo("FAILED_RETRYABLE");
+        assertThat(jdbc.queryForObject("SELECT status FROM channel_listing", String.class)).isEqualTo("FAILED_RETRYABLE");
+        String err = jdbc.queryForObject("SELECT last_error FROM job WHERE type='REGISTER'", String.class);
+        assertThat(err).contains("token=***").doesNotContain("abc123");
+        worker.poll(); // 아직 대기 시간 전이라 아무것도 안 한다
+        assertThat(channel.registers.get()).isZero();
+
+        jdbc.update("UPDATE job SET next_run_at = now() WHERE type='REGISTER'");
+        worker.poll();
+        assertThat(channel.registers.get()).isEqualTo(1);
+        assertThat(channel.uploads.get()).isEqualTo(6); // 두 번째 시도에서 다시 올리지 않음
+        assertThat(jdbc.queryForObject("SELECT attempt FROM job WHERE type='REGISTER'", Integer.class)).isEqualTo(2);
+    }
+
+    @Test
+    void invalidFailureWaitsForManualRetry() throws Exception {
+        approved("SS3");
+        channel.failNext.add("invalid");
+        worker.poll();
+        Long jobId = jdbc.queryForObject("SELECT id FROM job WHERE type='REGISTER'", Long.class);
+        mvc.perform(get("/api/jobs/{id}", jobId))
+                .andExpect(jsonPath("$.job.status").value("FAILED_INVALID"))
+                .andExpect(jsonPath("$.listing.status").value("FAILED_INVALID"))
+                .andExpect(jsonPath("$.listing.lastResponse.code").value("invalid"));
+        mvc.perform(get("/api/dashboard")).andExpect(jsonPath("$.today.failed").value(1));
+
+        mvc.perform(post("/api/jobs/{id}/retry", jobId)).andExpect(jsonPath("$.job.status").value("QUEUED"));
+        worker.poll();
+        assertThat(jdbc.queryForObject("SELECT status FROM channel_listing", String.class)).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void existingChannelProductIsLinkedNotDuplicated() throws Exception {
+        approved("DUP");
+        channel.existingFor = "DUP";
+        worker.poll();
+        assertThat(channel.registers.get()).isZero();
+        assertThat(jdbc.queryForObject("SELECT channel_product_no FROM channel_listing", String.class)).isEqualTo("EXIST-1");
+    }
+
+    @Test
+    void retryExhaustionMovesToInvalid() throws Exception {
+        approved("SS4");
+        for (int i = 0; i < 4; i++) {
+            channel.failNext.add("retry");
+            jdbc.update("UPDATE job SET next_run_at = now() WHERE type='REGISTER'");
+            worker.poll();
+        }
+        assertThat(jdbc.queryForObject("SELECT status FROM job WHERE type='REGISTER'", String.class)).isEqualTo("FAILED_INVALID");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM job_log WHERE message LIKE '%소진%'", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    void badLlmOutputEventuallyReturnsProductToUser() throws Exception {
+        long p = completeProduct("SS5");
+        llm.mode = "bad";
+        mvc.perform(post("/api/tenants/{t}/products/{id}/submit", tenant, p));
+        for (int i = 0; i < 4; i++) {
+            jdbc.update("UPDATE job SET next_run_at = now()");
+            worker.poll();
+        }
+        mvc.perform(get("/api/tenants/{t}/products/{id}", tenant, p))
+                .andExpect(jsonPath("$.status").value("NEEDS_INPUT"))
+                .andExpect(jsonPath("$.reviewNote").value(containsString("문구 자동 생성 실패")))
+                .andExpect(jsonPath("$.name").doesNotExist());
+    }
+
+    @Test
+    void submitWithMissingInputIsRejectedWithIssues() throws Exception {
+        long p = id(mvc.perform(json(post("/api/tenants/{t}/products", tenant), """
+                {"code":"EMPTY","category":"원피스"}""")));
+        mvc.perform(post("/api/tenants/{t}/products/{id}/submit", tenant, p))
+                .andExpect(status().is(422))
+                .andExpect(jsonPath("$.issues[*].field", hasItem("salePrice")))
+                .andExpect(jsonPath("$.issues[*].field", hasItem("images.detail")));
+        mvc.perform(get("/api/tenants/{t}/products/{id}", tenant, p)).andExpect(jsonPath("$.status").value("NEEDS_INPUT"));
+    }
+
+    @Test
+    void missingCategoryMappingAndSmartStoreStubFailClearly() throws Exception {
+        mvc.perform(json(post("/api/tenants/{t}/channel-accounts", tenant), """
+                {"channel":"SMARTSTORE","displayName":"샵에이 스토어","credentials":{"clientId":"x"}}"""));
+        approved("SS6");
+        worker.poll();
+        List<String> errors = jdbc.queryForList("SELECT last_error FROM job WHERE type='REGISTER' AND status='FAILED_INVALID'", String.class);
+        assertThat(errors).hasSize(1).first().asString().contains("카테고리 매핑");
+        mvc.perform(json(put("/api/tenants/{t}/category-mappings", tenant), """
+                {"channel":"SMARTSTORE","category":"원피스","channelCategoryId":"50000807"}"""));
+        jdbc.update("UPDATE job SET status='QUEUED', attempt=0 WHERE status='FAILED_INVALID'");
+        worker.poll();
+        assertThat(jdbc.queryForObject("SELECT last_error FROM job WHERE status='FAILED_INVALID'", String.class))
+                .contains("스마트스토어 연동은 아직 구현되지 않았습니다");
+    }
+
+    @Test
+    void generateSingleFieldAndApproveGuards() throws Exception {
+        long p = completeProduct("SS7");
+        mvc.perform(json(post("/api/tenants/{t}/products/{id}/generate", tenant, p), """
+                {"field":"OPTION_DISPLAY"}"""))
+                .andExpect(jsonPath("$.options[0].colorDisplay").value("딥 블랙"))
+                .andExpect(jsonPath("$.options[2].colorDisplay").doesNotExist())
+                .andExpect(jsonPath("$.fieldSources.OPTION_DISPLAY").value("AI"))
+                .andExpect(jsonPath("$.notice.material").value("린넨 100%"));
+        mvc.perform(post("/api/tenants/{t}/products/{id}/approve", tenant, p)).andExpect(status().isConflict());
+
+        // 문구를 사람이 다 채우면 생성 단계 없이 승인 대기로 간다
+        mvc.perform(json(put("/api/tenants/{t}/products/{id}", tenant, p), """
+                {"code":"SS7","category":"원피스","salePrice":39000,"material":"린넨 100%","name":"직접 쓴 이름",
+                 "description":"직접 쓴 설명","searchKeywords":["린넨"],"manufacturer":"(주)샵에이","originCountry":"대한민국",
+                 "washCare":"드라이","qualityAssurance":"관련 법령에 따름","asManager":"고객센터","asPhone":"02-000-0000"}"""))
+                .andExpect(jsonPath("$.fieldSources.NAME").value("MANUAL"));
+        int before = llm.calls.get();
+        mvc.perform(post("/api/tenants/{t}/products/{id}/submit", tenant, p))
+                .andExpect(jsonPath("$.status").value("PENDING_APPROVAL"));
+        assertThat(llm.calls.get()).isEqualTo(before);
+        mvc.perform(json(post("/api/tenants/{t}/products/{id}/reject", tenant, p), """
+                {"note":"상품명 수정 필요"}""")).andExpect(jsonPath("$.status").value("NEEDS_INPUT"))
+                .andExpect(jsonPath("$.reviewNote").value("상품명 수정 필요"));
+    }
+
+    // ---- helpers ----
+
+    private long approved(String code) throws Exception {
+        long p = completeProduct(code);
+        mvc.perform(json(put("/api/tenants/{t}/products/{id}", tenant, p), """
+                {"code":"%s","category":"원피스","salePrice":39000,"material":"린넨 100%%","name":"이름","description":"설명",
+                 "searchKeywords":["린넨"],"manufacturer":"(주)샵에이","originCountry":"대한민국","washCare":"드라이",
+                 "qualityAssurance":"관련 법령에 따름","asManager":"고객센터","asPhone":"02-000-0000"}""".formatted(code)));
+        mvc.perform(post("/api/tenants/{t}/products/{id}/submit", tenant, p)).andExpect(jsonPath("$.status").value("PENDING_APPROVAL"));
+        mvc.perform(post("/api/tenants/{t}/products/{id}/approve", tenant, p)).andExpect(jsonPath("$.status").value("APPROVED"));
+        return p;
+    }
+
+    private long completeProduct(String code) throws Exception {
+        long p = id(mvc.perform(json(post("/api/tenants/{t}/products", tenant), """
+                {"code":"%s","category":"원피스","salePrice":39000,"material":"린넨 100%%"}""".formatted(code))));
+        mvc.perform(json(post("/api/tenants/{t}/products/{id}/options/combine", tenant, p), """
+                {"colors":["블랙","아이보리"],"sizes":["S","M"],"stock":3}"""));
+        mvc.perform(json(put("/api/tenants/{t}/products/{id}/measurements", tenant, p), """
+                {"measurements":[{"size":"S","measures":{"총장":110}},{"size":"M","measures":{"총장":112}}]}"""));
+        var req = multipart("/api/tenants/{t}/images", tenant);
+        for (String n : List.of("main", "sub_01", "sub_02", "detail_01", "detail_02", "size")) {
+            req.file(png(code + "_" + n + ".png"));
+        }
+        mvc.perform(req).andExpect(jsonPath("$.matched.length()").value(6));
+        return p;
+    }
+
+    private static MockMultipartFile png(String name) throws Exception {
+        var out = new ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(600, 800, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", out);
+        return new MockMultipartFile("files", name, "image/png", out.toByteArray());
+    }
+
+    private static long id(org.springframework.test.web.servlet.ResultActions r) throws Exception {
+        return ((Number) JsonPath.read(r.andReturn().getResponse().getContentAsString(), "$.id")).longValue();
+    }
+
+    private static MockHttpServletRequestBuilder json(MockHttpServletRequestBuilder b, String body) {
+        return b.contentType(MediaType.APPLICATION_JSON).content(body);
+    }
+}

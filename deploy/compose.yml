@@ -1,16 +1,36 @@
 # auto-app 배포용. /opt/autoreg 에 이 파일과 .env 를 두고 실행한다.
+# backend(api)와 worker 는 같은 이미지, 다른 프로파일이다.
+x-app: &app
+  image: autoreg-backend:latest
+  restart: unless-stopped
+  env_file: .env
+  # 호스트의 sysadmin(1000)으로 돌아야 Claude 로그인 파일과 /data 를 그대로 쓸 수 있다
+  user: "1000:1000"
+  environment: &app-env
+    REDIS_HOST: redis
+    HOME: /home/sysadmin
+    DISABLE_AUTOUPDATER: "1"
+    AUTOREG_LLM_COMMAND: /home/sysadmin/.local/bin/claude
+  volumes:
+    - /data/images:/data/images
+    # Claude Max 로그인 (auto-app 에서 claude 로 로그인한 파일). 토큰 갱신 때문에 쓰기 가능해야 한다
+    - /home/sysadmin/.claude:/home/sysadmin/.claude
+    - /home/sysadmin/.claude.json:/home/sysadmin/.claude.json
+    - /home/sysadmin/.local/bin:/home/sysadmin/.local/bin:ro
+    - /home/sysadmin/.local/share/claude:/home/sysadmin/.local/share/claude:ro
+  depends_on: [redis]
+
 services:
   backend:
+    <<: *app
     build: ./backend
-    image: autoreg-backend:latest
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      REDIS_HOST: redis
     ports: ["8080:8080"]
-    volumes:
-      - /data/images:/data/images
-    depends_on: [redis]
+
+  worker:
+    <<: *app
+    environment:
+      <<: *app-env
+      SPRING_PROFILES_ACTIVE: worker
 
   redis:
     image: redis:7

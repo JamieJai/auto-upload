@@ -38,3 +38,14 @@ spring:
     multipart:
       max-file-size: 30MB
       max-request-size: 300MB
+
+---
+autoreg:
+  llm:
+    provider: ${AUTOREG_LLM_PROVIDER:claude-cli}
+    command: ${AUTOREG_LLM_COMMAND:claude}
+    model: ${AUTOREG_LLM_MODEL:sonnet}
+    timeout-seconds: 180
+    max-concurrency: 2
+  worker:
+    poll-ms: 2000

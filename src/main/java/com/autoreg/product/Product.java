@@ -50,6 +50,9 @@ public class Product {
 
     private String description;
 
+    /** 반려 사유 */
+    private String reviewNote;
+
     @JdbcTypeCode(SqlTypes.ARRAY)
     @Column(columnDefinition = "text[]")
     private List<String> searchKeywords = new ArrayList<>();

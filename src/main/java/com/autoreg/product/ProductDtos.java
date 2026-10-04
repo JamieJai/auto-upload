@@ -89,6 +89,7 @@ public final class ProductDtos {
             String code,
             String category,
             ProductStatus status,
+            String reviewNote,
             String name,
             String description,
             List<String> searchKeywords,
@@ -101,13 +102,13 @@ public final class ProductDtos {
             OffsetDateTime createdAt,
             OffsetDateTime updatedAt) {
 
-        static ProductResponse of(Product p) {
+        public static ProductResponse of(Product p) {
             Map<String, String> notice = new java.util.LinkedHashMap<>();
             for (NoticeField f : NoticeField.values()) {
                 notice.put(f.key(), f.get(p));
             }
             return new ProductResponse(p.getId(), p.getTenantId(), p.getCode(), p.getCategory(), p.getStatus(),
-                    p.getName(), p.getDescription(), p.getSearchKeywords(), p.getFieldSources(), p.getSalePrice(),
+                    p.getReviewNote(), p.getName(), p.getDescription(), p.getSearchKeywords(), p.getFieldSources(), p.getSalePrice(),
                     notice,
                     p.getOptions().stream().map(OptionResponse::of).toList(),
                     p.getMeasurements().stream().map(MeasurementResponse::of).toList(),

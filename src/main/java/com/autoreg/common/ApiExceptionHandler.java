@@ -26,6 +26,23 @@ public class ApiExceptionHandler {
         return error(HttpStatus.CONFLICT, "CONFLICT", e.getMessage());
     }
 
+    public record ValidationError(String code, String message, List<com.autoreg.product.validation.ValidationIssue> issues) {}
+
+    @ExceptionHandler(ValidationFailedException.class)
+    ResponseEntity<ValidationError> validationFailed(ValidationFailedException e) {
+        return ResponseEntity.status(422).body(new ValidationError("VALIDATION_FAILED", e.getMessage(), e.issues()));
+    }
+
+    @ExceptionHandler(com.autoreg.llm.LlmException.class)
+    ResponseEntity<ApiError> llm(com.autoreg.llm.LlmException e) {
+        return error(HttpStatus.SERVICE_UNAVAILABLE, "LLM_UNAVAILABLE", e.getMessage());
+    }
+
+    @ExceptionHandler(com.autoreg.generation.GeneratedCopyException.class)
+    ResponseEntity<ApiError> badCopy(com.autoreg.generation.GeneratedCopyException e) {
+        return error(HttpStatus.BAD_GATEWAY, "LLM_BAD_OUTPUT", e.getMessage() + " — 다시 생성해 보세요");
+    }
+
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<ApiError> integrity(DataIntegrityViolationException e) {
         // 제약조건 이름·SQL 은 응답에 싣지 않는다
