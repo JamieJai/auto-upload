@@ -18,6 +18,13 @@ spring:
 
 server:
   port: 8080
+  forward-headers-strategy: native
+  servlet:
+    session:
+      timeout: 12h
+      cookie:
+        http-only: true
+        same-site: lax
 
 management:
   endpoints:
@@ -29,6 +36,9 @@ management:
       show-details: always
 
 autoreg:
+  admin:
+    user: ${AUTOREG_ADMIN_USER:}
+    password: ${AUTOREG_ADMIN_PASSWORD:}
   master-key: ${AUTOREG_MASTER_KEY:}
   image-root: ${AUTOREG_IMAGE_ROOT:/data/images}
 

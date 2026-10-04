@@ -32,6 +32,7 @@ import com.jayway.jsonpath.JsonPath;
 
 @SpringBootTest(properties = {
         "autoreg.master-key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "autoreg.admin.user=admin", "autoreg.admin.password=test-password-123",
         "management.health.redis.enabled=false"})
 @Testcontainers
 class ApiIntegrationTest {
@@ -58,7 +59,11 @@ class ApiIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        mvc = MockMvcBuilders.webAppContextSetup(context).build();
+        mvc = MockMvcBuilders.webAppContextSetup(context)
+                .apply(org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity())
+                .defaultRequest(get("/").with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("admin"))
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()))
+                .build();
         jdbc.execute("TRUNCATE tenant, channel_account, category_mapping, product RESTART IDENTITY CASCADE");
     }
 
@@ -219,6 +224,12 @@ class ApiIntegrationTest {
         mvc.perform(delete("/api/tenants/{t}/images/unmatched", t).param("filename", "../../shop-b/x.png"))
                 .andExpect(status().isNotFound());
         mvc.perform(get("/files/shop-a/_thumbs/SS2609001/main_01.jpg")).andExpect(status().isOk());
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .multipart("/api/tenants/{t}/products/{id}/images", t, id).file(png("아무이름.png", 300, 300))
+                        .file(png("other.png", 300, 300)).param("slot", "detail"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].seq", containsInAnyOrder(3, 4)));
     }
 
     @Test

@@ -55,6 +55,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 @SpringBootTest(properties = {
         "autoreg.master-key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "autoreg.admin.user=admin", "autoreg.admin.password=test-password-123",
         "management.health.redis.enabled=false",
         "autoreg.worker.poll-ms=86400000"})
 @ActiveProfiles("worker")
@@ -169,7 +170,11 @@ class WorkflowIntegrationTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        mvc = MockMvcBuilders.webAppContextSetup(context).build();
+        mvc = MockMvcBuilders.webAppContextSetup(context)
+                .apply(org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity())
+                .defaultRequest(get("/").with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("admin"))
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()))
+                .build();
         jdbc.execute("TRUNCATE tenant, channel_account, category_mapping, product, job RESTART IDENTITY CASCADE");
         llm.mode = "ok";
         channel.failNext.clear();

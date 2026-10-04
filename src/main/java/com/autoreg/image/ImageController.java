@@ -36,6 +36,14 @@ public class ImageController {
         return service.upload(tenantId, files);
     }
 
+    @PostMapping(path = "/products/{productId}/images", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public List<Matched> addToSlot(@PathVariable Long tenantId, @PathVariable Long productId, @RequestParam String slot,
+            @RequestPart("files") List<MultipartFile> files) {
+        return service.addToSlot(tenantId, productId,
+                com.autoreg.product.ImageSlot.of(slot).orElseThrow(() -> new IllegalArgumentException("알 수 없는 슬롯: " + slot)),
+                files);
+    }
+
     @GetMapping("/images/unmatched")
     public List<UnmatchedFile> unmatched(@PathVariable Long tenantId) {
         return service.unmatched(tenantId);

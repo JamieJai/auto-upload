@@ -83,6 +83,22 @@ public class ImageService {
         return new UploadResult(matched, unmatched);
     }
 
+    /** 상품 편집 화면에서 슬롯을 골라 올린다. 순번은 그 슬롯의 마지막 다음 번호부터 붙인다 */
+    @Transactional
+    public List<Matched> addToSlot(Long tenantId, Long productId, ImageSlot slot, List<MultipartFile> files) {
+        Tenant tenant = tenants.get(tenantId);
+        Product product = editableProduct(tenantId, productId);
+        int next = product.getImages().stream().filter(i -> i.getSlot() == slot).mapToInt(ProductImage::getSeq).max().orElse(0) + 1;
+        List<Matched> out = new ArrayList<>();
+        for (MultipartFile file : files) {
+            String original = ImageStorage.safeName(file.getOriginalFilename());
+            ProductImage img = attach(tenant, product, slot, next, extension(original), bytes(file), SourceType.UPLOAD, null);
+            out.add(new Matched(original, product.getId(), product.getCode(), slot.value(), next, img.getId()));
+            next++;
+        }
+        return out;
+    }
+
     public List<UnmatchedFile> unmatched(Long tenantId) {
         Path dir = storage.unmatchedDir(tenants.get(tenantId).getCode());
         if (!Files.isDirectory(dir)) {
