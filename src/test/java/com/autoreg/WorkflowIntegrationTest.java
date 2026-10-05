@@ -466,7 +466,7 @@ class WorkflowIntegrationTest {
     void browserExtensionIntakeCreatesDraftFromWholesalePage() throws Exception {
         mvc.perform(json(put("/api/tenants/{t}", tenant), """
                 {"code":"shop-a","name":"샵에이","productCodePrefix":"SA","priceRule":{"multiplier":2,"roundUnit":1000,"subtract":100,"defaultStock":7},
-                 "noticeDefaults":{"manufacturer":"(주)샵에이"}}""")).andExpect(status().isOk());
+                 "noticeDefaults":{"manufacturer":"(주)샵에이","wash_care":"기본 세탁"}}""")).andExpect(status().isOk());
         String issued = mvc.perform(json(post("/api/intake-tokens"), "{\"name\":\"크롬\"}"))
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
         String token = JsonPath.read(issued, "$.token");
@@ -502,6 +502,7 @@ class WorkflowIntegrationTest {
                 .andExpect(jsonPath("$.salePrice").value(35900))
                 .andExpect(jsonPath("$.notice.material").value("면 100%"))
                 .andExpect(jsonPath("$.notice.manufacturer").value("(주)샵에이"))
+                .andExpect(jsonPath("$.notice.wash_care").value("단독 손세탁"))
                 .andExpect(jsonPath("$.options.length()").value(2))
                 .andExpect(jsonPath("$.options[0].size").value("FREE"))
                 .andExpect(jsonPath("$.options[0].stock").value(7))

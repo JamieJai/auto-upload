@@ -48,6 +48,11 @@ public class ExtractJobHandler {
     private final TransactionTemplate tx;
     private final JsonMapper json;
 
+    /** 사람이 손대지 않은 값: 비어 있거나 판매자 기본값과 같다 */
+    static boolean untouched(String current, Tenant t, String noticeKey) {
+        return current == null || current.isBlank() || current.equals(t.getNoticeDefaults().get(noticeKey));
+    }
+
     public void handle(Job job) {
         jobs.step(job.getId(), "EXTRACT", "도매처 원문에서 값 추출");
         String done = tx.execute(s -> {
@@ -82,11 +87,12 @@ public class ExtractJobHandler {
                 p.setMaterial(ex.material());
                 filled.add("소재");
             }
-            if ((p.getOriginCountry() == null || p.getOriginCountry().isBlank()) && ex.originCountry() != null) {
+            // 제조국·세탁방법은 상품마다 다를 수 있어, 비어 있거나 판매자 기본값 그대로면 원문 값이 이긴다
+            if (ex.originCountry() != null && untouched(p.getOriginCountry(), t, "origin_country")) {
                 p.setOriginCountry(ex.originCountry());
                 filled.add("제조국");
             }
-            if ((p.getWashCare() == null || p.getWashCare().isBlank()) && ex.washCare() != null) {
+            if (ex.washCare() != null && untouched(p.getWashCare(), t, "wash_care")) {
                 p.setWashCare(ex.washCare());
                 filled.add("세탁방법");
             }
