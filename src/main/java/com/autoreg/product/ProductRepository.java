@@ -15,6 +15,9 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     boolean existsByTenantIdAndCode(Long tenantId, String code);
 
+    @org.springframework.data.jpa.repository.Query("select p.code from Product p where p.tenantId = :tenantId and p.code like concat(:prefix, '%')")
+    java.util.List<String> findCodesStartingWith(Long tenantId, String prefix);
+
     Page<Product> findByTenantId(Long tenantId, Pageable pageable);
 
     Page<Product> findByTenantIdAndStatus(Long tenantId, ProductStatus status, Pageable pageable);

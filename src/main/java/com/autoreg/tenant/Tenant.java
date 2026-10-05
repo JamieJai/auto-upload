@@ -47,6 +47,10 @@ public class Tenant {
     @Column(columnDefinition = "text[]")
     private List<String> allowedImageDomains = new ArrayList<>();
 
+    /** 확장으로 받은 상품의 판매가·기본 재고 규칙 (PriceRule 참고). 없으면 판매가는 사람이 넣는다 */
+    @JdbcTypeCode(SqlTypes.JSON)
+    private Map<String, Object> priceRule;
+
     private boolean active = true;
 
     @CreationTimestamp

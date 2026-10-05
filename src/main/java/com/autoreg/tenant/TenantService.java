@@ -60,6 +60,7 @@ public class TenantService {
         t.setAllowedImageDomains(req.allowedImageDomains() == null ? new ArrayList<>()
                 : req.allowedImageDomains().stream().map(String::trim).map(String::toLowerCase)
                         .filter(s -> !s.isEmpty()).distinct().toList());
+        t.setPriceRule(req.priceRule() == null || req.priceRule().isEmpty() ? null : PriceRule.check(req.priceRule()));
         if (req.active() != null) {
             t.setActive(req.active());
         }

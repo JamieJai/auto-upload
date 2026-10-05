@@ -89,6 +89,16 @@ class WorkflowIntegrationTest {
             calls.incrementAndGet();
             lastPrompt = prompt;
             ObjectNode n = json.createObjectNode();
+            if (schema.contains("wholesalePrice")) {
+                n.put("wholesalePrice", 18000).put("material", "면 100%").putNull("originCountry").put("washCare", "단독 손세탁")
+                        .put("category", "원피스").put("nameHint", "베이직 셔츠 원피스");
+                n.putArray("colors").add("블랙").add("아이보리");
+                n.putArray("sizes");
+                var m = n.putArray("measurements").addObject().put("size", "FREE");
+                m.putArray("parts").add(json.createObjectNode().put("part", "총장").put("cm", 108))
+                        .add(json.createObjectNode().put("part", "소매길이").put("cm", 61));
+                return n;
+            }
             if (mode.equals("bad")) {
                 return n.put("name", "").put("description", "짧음");
             }
@@ -175,7 +185,7 @@ class WorkflowIntegrationTest {
     void setUp() throws Exception {
         mvc = MockMvcBuilders.webAppContextSetup(context)
                 .apply(org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity())
-                .defaultRequest(get("/").with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("admin"))
+                .defaultRequest(get("/").with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("admin").roles("ADMIN"))
                         .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()))
                 .build();
         jdbc.execute("TRUNCATE tenant, channel_account, category_mapping, product, job RESTART IDENTITY CASCADE");
@@ -450,6 +460,65 @@ class WorkflowIntegrationTest {
         mvc.perform(json(post("/api/tenants/{t}/products/{id}/reject", tenant, p), """
                 {"note":"상품명 수정 필요"}""")).andExpect(jsonPath("$.status").value("NEEDS_INPUT"))
                 .andExpect(jsonPath("$.reviewNote").value("상품명 수정 필요"));
+    }
+
+    @Test
+    void browserExtensionIntakeCreatesDraftFromWholesalePage() throws Exception {
+        mvc.perform(json(put("/api/tenants/{t}", tenant), """
+                {"code":"shop-a","name":"샵에이","productCodePrefix":"SA","priceRule":{"multiplier":2,"roundUnit":1000,"subtract":100,"defaultStock":7},
+                 "noticeDefaults":{"manufacturer":"(주)샵에이"}}""")).andExpect(status().isOk());
+        String issued = mvc.perform(json(post("/api/intake-tokens"), "{\"name\":\"크롬\"}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        String token = JsonPath.read(issued, "$.token");
+        assertThat(token).startsWith("ar_");
+
+        MockMvc ext = MockMvcBuilders.webAppContextSetup(context)
+                .apply(org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity()).build();
+        ext.perform(get("/api/intake/tenants")).andExpect(status().isUnauthorized());
+        ext.perform(get("/api/intake/tenants").header("Authorization", "Bearer ar_wrong")).andExpect(status().isUnauthorized());
+        ext.perform(get("/api/intake/tenants").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].code").value("shop-a"));
+        // 토큰으로 다른 API 는 못 쓴다
+        ext.perform(get("/api/tenants").header("Authorization", "Bearer " + token)).andExpect(status().isUnauthorized());
+
+        var meta = new MockMultipartFile("meta", "", "application/json", ("""
+                {"tenantId":%d,"url":"https://sinsangmarket.kr/goods/1","title":"베이직 셔츠 원피스",
+                 "text":"베이직 셔츠 원피스 도매가 18,000원 컬러 블랙 아이보리 FREE 소재 면 100%% 총장 108 단독 손세탁",
+                 "images":[{"url":"https://img.example/1.jpg","slot":"main"},{"url":"https://img.example/2.jpg","slot":"detail"}]}"""
+                .formatted(tenant)).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String res = ext.perform(multipart("/api/intake/products").file(meta).file(png("a.png")).file(png("b.png"))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.imageCount").value(2))
+                .andReturn().getResponse().getContentAsString();
+        long id = ((Number) JsonPath.read(res, "$.productId")).longValue();
+        String code = JsonPath.read(res, "$.code");
+        assertThat(code).matches("SA\\d{4}001");
+
+        worker.poll();
+        mvc.perform(get("/api/tenants/{t}/products/{id}", tenant, id))
+                .andExpect(jsonPath("$.status").value("DRAFT"))
+                .andExpect(jsonPath("$.category").value("원피스"))
+                .andExpect(jsonPath("$.salePrice").value(35900))
+                .andExpect(jsonPath("$.notice.material").value("면 100%"))
+                .andExpect(jsonPath("$.notice.manufacturer").value("(주)샵에이"))
+                .andExpect(jsonPath("$.options.length()").value(2))
+                .andExpect(jsonPath("$.options[0].size").value("FREE"))
+                .andExpect(jsonPath("$.options[0].stock").value(7))
+                .andExpect(jsonPath("$.measurements[0].measures['총장']").value(108))
+                .andExpect(jsonPath("$.measurements[0].measures['소매길이']").doesNotExist())
+                .andExpect(jsonPath("$.images.length()").value(2))
+                .andExpect(jsonPath("$.images[0].sourceType").value("WEB"))
+                .andExpect(jsonPath("$.reviewNote").value(containsString("소매길이 61")));
+        mvc.perform(get("/api/tenants/{t}/products/{id}/source", tenant, id))
+                .andExpect(jsonPath("$.sourceUrl").value("https://sinsangmarket.kr/goods/1"))
+                .andExpect(jsonPath("$.extracted.wholesalePrice").value(18000));
+
+        // 폐기한 토큰은 더 못 쓴다
+        Long tokenId = ((Number) JsonPath.read(issued, "$.id")).longValue();
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/api/intake-tokens/{id}", tokenId))
+                .andExpect(status().isNoContent());
+        ext.perform(get("/api/intake/tenants").header("Authorization", "Bearer " + token)).andExpect(status().isUnauthorized());
     }
 
     // ---- helpers ----

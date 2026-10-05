@@ -26,12 +26,18 @@ import org.springframework.security.web.context.SecurityContextRepository;
 public class SecurityConfig {
 
     @Bean
-    SecurityFilterChain api(HttpSecurity http, SecurityContextRepository contexts) throws Exception {
+    SecurityFilterChain api(HttpSecurity http, SecurityContextRepository contexts,
+            com.autoreg.intake.IntakeTokenService intakeTokens) throws Exception {
         http
                 .authorizeHttpRequests(a -> a
                         .requestMatchers("/api/auth/login", "/api/auth/me", "/actuator/health", "/actuator/health/**").permitAll()
-                        .anyRequest().authenticated())
-                .csrf(c -> c.spa().csrfTokenRepository(org.springframework.security.web.csrf.CookieCsrfTokenRepository.withHttpOnlyFalse()))
+                        // 확장 토큰은 intake API 만, 세션 로그인은 그 밖의 전부
+                        .requestMatchers("/api/intake/**").hasRole("INTAKE")
+                        .anyRequest().hasRole("ADMIN"))
+                .csrf(c -> c.spa().csrfTokenRepository(org.springframework.security.web.csrf.CookieCsrfTokenRepository.withHttpOnlyFalse())
+                        .ignoringRequestMatchers("/api/intake/**"))
+                .addFilterBefore(new com.autoreg.intake.IntakeTokenFilter(intakeTokens),
+                        org.springframework.security.web.authentication.AnonymousAuthenticationFilter.class)
                 .addFilterAfter(new CsrfCookieFilter(), org.springframework.security.web.authentication.www.BasicAuthenticationFilter.class)
                 .securityContext(s -> s.securityContextRepository(contexts))
                 .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))

@@ -31,6 +31,7 @@ public class JobWorker {
     private final JobService jobs;
     private final GenerateJobHandler generate;
     private final RegisterJobHandler register;
+    private final ExtractJobHandler extract;
 
     @EventListener(ApplicationReadyEvent.class)
     public void recover() {
@@ -58,6 +59,7 @@ public class JobWorker {
             switch (job.getType()) {
                 case GENERATE -> generate.handle(job);
                 case REGISTER -> register.handle(job);
+                case EXTRACT -> extract.handle(job);
             }
         } catch (JobException e) {
             failed(job, e);

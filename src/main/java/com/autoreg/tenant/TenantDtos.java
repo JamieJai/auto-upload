@@ -18,6 +18,7 @@ public final class TenantDtos {
             String brandTone,
             Map<String, String> noticeDefaults,
             List<String> allowedImageDomains,
+            Map<String, Object> priceRule,
             Boolean active) {}
 
     public record TenantResponse(
@@ -28,11 +29,12 @@ public final class TenantDtos {
             String brandTone,
             Map<String, String> noticeDefaults,
             List<String> allowedImageDomains,
+            Map<String, Object> priceRule,
             boolean active) {
 
         static TenantResponse of(Tenant t) {
             return new TenantResponse(t.getId(), t.getCode(), t.getName(), t.getProductCodePrefix(), t.getBrandTone(),
-                    t.getNoticeDefaults(), t.getAllowedImageDomains(), t.isActive());
+                    t.getNoticeDefaults(), t.getAllowedImageDomains(), t.getPriceRule(), t.isActive());
         }
     }
 }

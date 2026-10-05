@@ -88,6 +88,10 @@ public class OpsService {
         if (j.getType() == JobType.GENERATE) {
             throw new ConflictException("문구 생성은 상품을 다시 제출해서 재시도하세요");
         }
+        if (j.getType() == JobType.EXTRACT) {
+            jobs.retry(id);
+            return job(id);
+        }
         Product p = products.findById(j.getProductId()).orElseThrow();
         if (p.getStatus() != ProductStatus.APPROVED) {
             throw new ConflictException("승인된 상품만 다시 등록할 수 있습니다 (현재 " + p.getStatus() + ")");
