@@ -24,7 +24,7 @@ public final class SmartStoreReference {
 
     static final List<String> DETAIL_KEYS = List.of("originAreaInfo", "purchaseReviewInfo", "taxType",
             "certificationTargetExcludeContent", "sellerCommentUsable", "minorPurchasable", "productAttributes",
-            "itselfProductionProductYn");
+            "itselfProductionProductYn", "afterServiceInfo");
 
     private SmartStoreReference() {}
 
@@ -95,7 +95,7 @@ public final class SmartStoreReference {
         snap.put("deliveryInfo", settings.get("deliveryInfo"));
         Map<String, Object> detail = new LinkedHashMap<>();
         for (String k : List.of("originAreaInfo", "taxType", "minorPurchasable", "certificationTargetExcludeContent",
-                "naverShoppingSearchInfo")) {
+                "naverShoppingSearchInfo", "afterServiceInfo")) {
             if (settings.get(k) != null) {
                 detail.put(k, settings.get(k));
             }

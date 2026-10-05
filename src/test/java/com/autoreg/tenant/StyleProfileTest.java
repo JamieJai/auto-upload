@@ -97,6 +97,42 @@ class StyleProfileTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void noticeAllDetailReferenceKcNotTargetAndHeaderMarker() {
+        Product p = ProductValidatorTest.complete();
+        p.setAsPhone(null);
+        p.setManufacturer(null);
+        StyleProfile s = new StyleProfile();
+        s.getRegistration().setNoticeMode("DETAIL_REFERENCE");
+        s.getRegistration().setKcMode("NOT_TARGET");
+        assertThat(new ProductValidator().validate(p, ValidationPhase.INPUT, s)).isEmpty();
+        assertThat(new ProductValidator().validate(p, ValidationPhase.INPUT)).isNotEmpty();
+
+        Map<String, Object> ref = new java.util.HashMap<>(Map.of(
+                "deliveryInfo", Map.of("d", 1),
+                "detailAttribute", Map.of("originAreaInfo", Map.of("originAreaCode", "00"),
+                        "afterServiceInfo", Map.of("afterServiceTelephoneNumber", "01033508536", "afterServiceGuideContent", "반품/교환 상세설명 참고"),
+                        "certificationTargetExcludeContent", Map.of("kcCertifiedProductExclusionYn", "FALSE")),
+                "smartstoreChannelProduct", Map.of()));
+        var images = new ArrayList<com.autoreg.channel.adapter.ChannelAdapter.UploadedImage>();
+        p.getImages().forEach(i -> images.add(new com.autoreg.channel.adapter.ChannelAdapter.UploadedImage(i, "u/" + i.getSlot().value() + i.getSeq())));
+        Map<String, Object> body = SmartStorePayload.build(p, "50000803", images, Map.of(), ref, s);
+        Map<String, Object> d = (Map<String, Object>) ((Map<String, Object>) body.get("originProduct")).get("detailAttribute");
+        Map<String, Object> wear = (Map<String, Object>) ((Map<String, Object>) d.get("productInfoProvidedNotice")).get("wear");
+        assertThat(wear.values()).containsOnly("상품상세참조");
+        assertThat(wear).containsKeys("material", "color", "size", "manufacturer", "caution", "packDate", "warrantyPolicy", "afterServiceDirector");
+        assertThat((Map<String, Object>) d.get("afterServiceInfo")).containsEntry("afterServiceTelephoneNumber", "01033508536");
+        assertThat((Map<String, Object>) d.get("certificationTargetExcludeContent")).containsEntry("kcCertifiedProductExclusionYn", "TRUE");
+        assertThat((String) ((Map<String, Object>) body.get("originProduct")).get("detailContent")).startsWith("<!--@CONTENTS_HEADER-->");
+
+        s.getRegistration().setPackDateMode("CURRENT_MONTH");
+        body = SmartStorePayload.build(p, "50000803", images, Map.of(), ref, s);
+        d = (Map<String, Object>) ((Map<String, Object>) body.get("originProduct")).get("detailAttribute");
+        wear = (Map<String, Object>) ((Map<String, Object>) d.get("productInfoProvidedNotice")).get("wear");
+        assertThat((String) wear.get("packDate")).matches("\\d{4}-\\d{2}");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void payloadFollowsStyle() {
         Product p = ProductValidatorTest.complete();
         p.getOptions().forEach(o -> o.setSize(o.getSize().equals("M") ? "free" : "l"));

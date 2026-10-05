@@ -573,16 +573,23 @@ class WorkflowIntegrationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.samples").value(6));
         imaging.removed.clear();
         mvc.perform(json(post("/api/tenants/{t}/products/{id}/watermark", tenant, p), "{\"template\":\"sinsang\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.processed").value(6))
-                .andExpect(jsonPath("$.skipped").value(1));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.jobId").exists());
+        worker.poll();
+        assertThat(imaging.removed).hasSize(6);
+        assertThat(jdbc.queryForObject("SELECT last_error FROM job WHERE type='WATERMARK'", String.class)).isNull();
         assertThat(imageRoot.resolve("shop-a/WM1/orig/main_01.png")).exists();
         String detail = mvc.perform(get("/api/tenants/{t}/products/{id}", tenant, p)).andReturn().getResponse().getContentAsString();
         List<Number> wmIds = JsonPath.read(detail, "$.images[?(@.watermarkTemplate=='sinsang')].id");
         assertThat(wmIds).hasSize(6);
-        // 두 번 적용해도 다시 처리하지 않는다
-        mvc.perform(json(post("/api/tenants/{t}/products/{id}/watermark", tenant, p), "{\"template\":\"sinsang\"}"))
-                .andExpect(jsonPath("$.processed").value(0));
+        // 두 번 적용해도 다시 처리하지 않는다. redo 면 원본에서 다시
+        imaging.removed.clear();
+        mvc.perform(json(post("/api/tenants/{t}/products/{id}/watermark", tenant, p), "{\"template\":\"sinsang\"}"));
+        worker.poll();
+        assertThat(imaging.removed).isEmpty();
+        mvc.perform(json(post("/api/tenants/{t}/products/{id}/watermark", tenant, p), "{\"template\":\"sinsang\",\"redo\":true}"));
+        worker.poll();
+        assertThat(imaging.removed).hasSize(6);
+        assertThat(imageRoot.resolve("shop-a/WM1/orig/main_01.png")).exists();
         mvc.perform(post("/api/tenants/{t}/products/{id}/images/{img}/restore", tenant, p, wmIds.get(0))).andExpect(status().isOk());
         String after = mvc.perform(get("/api/tenants/{t}/products/{id}", tenant, p)).andReturn().getResponse().getContentAsString();
         List<Number> left = JsonPath.read(after, "$.images[?(@.watermarkTemplate=='sinsang')].id");

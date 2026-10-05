@@ -1,6 +1,10 @@
 package com.autoreg.job;
 
 import java.time.OffsetDateTime;
+import java.util.Map;
+
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
@@ -50,6 +54,11 @@ public class Job {
     private OffsetDateTime nextRunAt = OffsetDateTime.now();
 
     private String lastError;
+
+    /** 작업별 인자 (WATERMARK: template, redo) */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(updatable = false)
+    private Map<String, Object> params;
 
     @CreationTimestamp
     private OffsetDateTime createdAt;

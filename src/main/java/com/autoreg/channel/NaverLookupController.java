@@ -31,6 +31,15 @@ public class NaverLookupController {
 
     public record StoreProduct(String originProductNo, String name, String status, String categoryId, String sellerCode) {}
 
+    /** 스토어의 원상품 하나를 그대로 (읽기 전용, 설정 확인용) */
+    @GetMapping("/origin-products/{no}")
+    public Object originProduct(@PathVariable Long tenantId, @PathVariable String no) {
+        if (!no.matches("\\d{5,20}")) {
+            throw new IllegalArgumentException("원상품번호가 올바르지 않습니다");
+        }
+        return call(() -> client.getOriginProduct(creds(tenantId), no));
+    }
+
     @GetMapping("/origin-areas")
     public Object originAreas(@PathVariable Long tenantId) {
         return call(() -> client.getJson(creds(tenantId), "/v1/product-origin-areas"));

@@ -45,8 +45,8 @@ class SmartStoreReferenceTest {
         assertThat(snap).containsEntry("leafCategoryId", "50000807").containsKey("deliveryInfo")
                 .doesNotContainKeys("customerBenefit", "images", "salePrice", "name");
         assertThat(d).containsKeys("originAreaInfo", "productAttributes", "purchaseReviewInfo", "sellerCommentUsable",
-                "itselfProductionProductYn", "taxType")
-                .doesNotContainKeys("optionInfo", "seoInfo", "manufactureDate", "afterServiceInfo", "productInfoProvidedNotice");
+                "itselfProductionProductYn", "taxType", "afterServiceInfo")
+                .doesNotContainKeys("optionInfo", "seoInfo", "manufactureDate", "productInfoProvidedNotice");
         assertThat((Map<String, Object>) d.get("naverShoppingSearchInfo")).containsOnlyKeys("brandName", "manufacturerName");
         assertThat((Map<String, Object>) snap.get("smartstoreChannelProduct")).containsOnlyKeys("naverShoppingRegistration");
     }

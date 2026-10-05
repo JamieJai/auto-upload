@@ -36,7 +36,13 @@ public class JobService {
 
     @Transactional
     public Job enqueue(Long tenantId, Long productId, JobType type, Long channelListingId) {
+        return enqueue(tenantId, productId, type, channelListingId, null);
+    }
+
+    @Transactional
+    public Job enqueue(Long tenantId, Long productId, JobType type, Long channelListingId, Map<String, Object> params) {
         Job j = new Job();
+        j.setParams(params);
         j.setTenantId(tenantId);
         j.setProductId(productId);
         j.setType(type);

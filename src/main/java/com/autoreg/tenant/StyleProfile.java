@@ -134,6 +134,8 @@ public class StyleProfile {
     public static class Detail {
         private List<DetailBlock> blocks = new ArrayList<>(
                 List.of(DetailBlock.TEXT, DetailBlock.DETAIL_IMAGES, DetailBlock.SIZE_TABLE, DetailBlock.SIZE_IMAGES));
+        /** 스마트스토어 머릿말 자리 표시(<!--@CONTENTS_HEADER-->)를 맨 앞에 넣는다 (에디터로 만든 상품에 있는 표시) */
+        private boolean storeHeaderMarker = true;
     }
 
     @Data
@@ -154,6 +156,13 @@ public class StyleProfile {
         /** KOREA_OR_OTHER 에서 '기타' 로 보낼 네이버 원산지 코드와 표시 문구 */
         private String otherOriginCode = "";
         private String otherOriginContent = "상세설명 참조";
+        /** 상품정보제공고시: AS_IS(입력값 그대로) 또는 DETAIL_REFERENCE(모든 항목을 noticeText 로) */
+        private String noticeMode = "AS_IS";
+        private String noticeText = "상품상세참조";
+        /** DETAIL_REFERENCE 일 때 제조연월: TEXT(noticeText) 또는 CURRENT_MONTH(등록 월 YYYY-MM, 네이버가 글자를 거부하면) */
+        private String packDateMode = "TEXT";
+        /** KC 인증: REFERENCE(레퍼런스 그대로) 또는 NOT_TARGET(인증 대상 아님) */
+        private String kcMode = "REFERENCE";
     }
 
     public static StyleProfile from(Map<String, Object> stored) {
@@ -224,6 +233,11 @@ public class StyleProfile {
         }
         if ("KOREA_OR_OTHER".equals(registration.originMode) && registration.otherOriginCode.isBlank()) {
             throw new IllegalArgumentException("'기타' 원산지 코드를 넣으세요");
+        }
+        if (!List.of("AS_IS", "DETAIL_REFERENCE").contains(registration.noticeMode)
+                || !List.of("TEXT", "CURRENT_MONTH").contains(registration.packDateMode)
+                || !List.of("REFERENCE", "NOT_TARGET").contains(registration.kcMode)) {
+            throw new IllegalArgumentException("고시정보·제조연월·KC 설정 값이 올바르지 않습니다");
         }
         if (options.groupName1.isBlank() || options.groupName2.isBlank()) {
             throw new IllegalArgumentException("옵션 그룹명이 비어 있습니다");

@@ -147,9 +147,14 @@ public final class SmartStorePayload {
         search.put("modelName", p.getName());
         search.put("catalogMatchingYn", false);
         d.put("naverShoppingSearchInfo", search);
-        d.put("afterServiceInfo", Map.of(
-                "afterServiceTelephoneNumber", digits(p.getAsPhone()),
-                "afterServiceGuideContent", p.getAsManager()));
+        // A/S 정보(고시와 별개)는 실제 전화번호가 필요하다. 상품에 없으면 레퍼런스(스토어) 값을 쓴다
+        String phone = digits(p.getAsPhone());
+        if (phone.length() >= 8) {
+            d.put("afterServiceInfo", Map.of("afterServiceTelephoneNumber", phone,
+                    "afterServiceGuideContent", blank(p.getAsManager()) ? "상세설명 참조" : p.getAsManager()));
+        } else if (!(ref.get("afterServiceInfo") instanceof Map<?, ?>)) {
+            throw ChannelException.invalid("A/S 전화번호가 없습니다. 판매자 고시정보 기본값에 넣거나, 레퍼런스 상품을 다시 가져오세요");
+        }
         d.put("sellerCodeInfo", Map.of("sellerManagementCode", p.getCode()));
         StyleProfile.Registration reg = style.getRegistration();
         if ("KOREA_OR_OTHER".equals(reg.getOriginMode())) {
@@ -161,6 +166,10 @@ public final class SmartStorePayload {
         d.putIfAbsent("taxType", "TAX");
         d.putIfAbsent("minorPurchasable", true);
         d.putIfAbsent("certificationTargetExcludeContent", Map.of("kcCertifiedProductExclusionYn", "TRUE"));
+        if ("NOT_TARGET".equals(style.getRegistration().getKcMode())) {
+            d.put("certificationTargetExcludeContent", Map.of("kcCertifiedProductExclusionYn", "TRUE"));
+            d.remove("productCertificationInfos");
+        }
         d.put("productInfoProvidedNotice", Map.of("productInfoProvidedNoticeType", "WEAR", "wear", wearNotice(p, style)));
         String ym = p.getManufacturedYm();
         if (ym != null && ym.matches("\\d{4}-\\d{2}")) {
@@ -207,6 +216,19 @@ public final class SmartStorePayload {
 
     /** 상품정보제공고시 의류(WEAR). 값은 모두 입력값 그대로 (AI 생성 금지 항목) */
     private static Map<String, Object> wearNotice(Product p, StyleProfile style) {
+        StyleProfile.Registration reg = style.getRegistration();
+        if ("DETAIL_REFERENCE".equals(reg.getNoticeMode())) {
+            String t = reg.getNoticeText();
+            Map<String, Object> w = new LinkedHashMap<>();
+            for (String k : List.of("material", "color", "size", "manufacturer", "caution")) {
+                w.put(k, t);
+            }
+            w.put("packDate", "CURRENT_MONTH".equals(reg.getPackDateMode())
+                    ? java.time.YearMonth.now(java.time.ZoneId.of("Asia/Seoul")).toString() : t);
+            w.put("warrantyPolicy", t);
+            w.put("afterServiceDirector", t);
+            return w;
+        }
         Set<String> colors = p.getOptions().stream().map(o -> style.color(displayColor(o))).collect(Collectors.toCollection(LinkedHashSet::new));
         Set<String> sizes = p.getOptions().stream().map(o -> style.size(o.getSize())).collect(Collectors.toCollection(LinkedHashSet::new));
         Map<String, Object> w = new LinkedHashMap<>();
@@ -228,7 +250,12 @@ public final class SmartStorePayload {
 
     /** 상세설명 HTML. 블록 순서는 특성(detail.blocks)을 따른다. 기본: 문구 → 디테일컷 → 실측표 → 사이즈표 이미지 */
     static String detailHtml(Product p, List<UploadedImage> images, StyleProfile style) {
-        StringBuilder sb = new StringBuilder("<div style=\"max-width:860px;margin:0 auto;text-align:center;font-size:15px;line-height:1.8;color:#222\">");
+        StringBuilder sb = new StringBuilder();
+        if (style.getDetail().isStoreHeaderMarker()) {
+            // 스마트스토어 머릿말이 들어가는 자리 (에디터로 만든 상품의 SE_DOC_HEADER 와 같은 표시)
+            sb.append("<!--@CONTENTS_HEADER-->");
+        }
+        sb.append("<div style=\"max-width:860px;margin:0 auto;text-align:center;font-size:15px;line-height:1.8;color:#222\">");
         for (StyleProfile.DetailBlock b : style.getDetail().getBlocks()) {
             switch (b) {
                 case TEXT -> {

@@ -19,6 +19,10 @@ import lombok.RequiredArgsConstructor;
 public class WatermarkController {
 
     private final WatermarkService service;
+    private final com.autoreg.job.JobService jobs;
+    private final com.autoreg.product.ProductRepository products;
+
+    public record Queued(Long jobId) {}
 
     public record CreateRequest(@NotBlank @Pattern(regexp = "^[a-z0-9_-]{2,60}$", message = "영문 소문자·숫자·_- 2~60자") String name,
             @NotNull Long tenantId, @NotNull Long productId) {}
@@ -42,9 +46,15 @@ public class WatermarkController {
         return service.createTemplate(req.name(), req.tenantId(), req.productId());
     }
 
+    /** 사진당 20초 안팎이라 워커 작업으로 넘긴다. 진행은 작업 상세에서 본다 */
     @PostMapping("/api/tenants/{tenantId}/products/{id}/watermark")
-    public WatermarkService.Applied apply(@PathVariable Long tenantId, @PathVariable Long id, @Valid @RequestBody ApplyRequest req) {
-        return service.apply(tenantId, id, req.template(), Boolean.TRUE.equals(req.redo()));
+    public Queued apply(@PathVariable Long tenantId, @PathVariable Long id, @Valid @RequestBody ApplyRequest req) {
+        products.findByIdAndTenantId(id, tenantId).orElseThrow(() -> new com.autoreg.common.NotFoundException("product", id));
+        if (service.templates().stream().noneMatch(t -> t.name().equals(req.template()))) {
+            throw new IllegalArgumentException("워터마크 템플릿이 없습니다: " + req.template());
+        }
+        return new Queued(jobs.enqueue(tenantId, id, com.autoreg.job.JobType.WATERMARK, null,
+                java.util.Map.of("template", req.template(), "redo", Boolean.TRUE.equals(req.redo()))).getId());
     }
 
     @PostMapping("/api/tenants/{tenantId}/products/{id}/images/{imageId}/restore")

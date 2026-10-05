@@ -43,7 +43,7 @@ public class ProductValidator {
         checkBasics(p, issues);
         checkOptions(p, issues);
         checkMeasurements(p, issues, style.getRules().isRequireMeasurements());
-        checkNotice(p, issues);
+        checkNotice(p, issues, !"DETAIL_REFERENCE".equals(style.getRegistration().getNoticeMode()));
         checkImages(p, issues, style);
         if (phase == ValidationPhase.READY) {
             checkTexts(p, issues, style);
@@ -110,9 +110,10 @@ public class ProductValidator {
         }));
     }
 
-    private static void checkNotice(Product p, List<ValidationIssue> issues) {
+    /** required=false 면 (고시를 모두 '상품상세참조' 로 보내는 판매자) 빈 칸을 막지 않는다 */
+    private static void checkNotice(Product p, List<ValidationIssue> issues, boolean required) {
         for (NoticeField f : NoticeField.values()) {
-            if (f.required() && blank(f.get(p))) {
+            if (required && f.required() && blank(f.get(p))) {
                 issues.add(new ValidationIssue("notice." + f.key(), "REQUIRED", "고시정보 '" + f.label() + "'을(를) 입력하세요"));
             }
         }

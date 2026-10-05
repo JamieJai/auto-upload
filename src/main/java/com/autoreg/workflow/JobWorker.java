@@ -32,6 +32,7 @@ public class JobWorker {
     private final GenerateJobHandler generate;
     private final RegisterJobHandler register;
     private final ExtractJobHandler extract;
+    private final WatermarkJobHandler watermark;
 
     @EventListener(ApplicationReadyEvent.class)
     public void recover() {
@@ -60,6 +61,7 @@ public class JobWorker {
                 case GENERATE -> generate.handle(job);
                 case REGISTER -> register.handle(job);
                 case EXTRACT -> extract.handle(job);
+                case WATERMARK -> watermark.handle(job);
             }
         } catch (JobException e) {
             failed(job, e);
