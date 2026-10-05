@@ -35,9 +35,13 @@ public class IntakeTokenFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String h = req.getHeader("Authorization");
         if (h != null && h.startsWith("Bearer ")) {
-            tokens.authenticate(h.substring(7).trim()).ifPresent(name -> SecurityContextHolder.getContext().setAuthentication(
-                    UsernamePasswordAuthenticationToken.authenticated("intake:" + name, null,
-                            List.of(new SimpleGrantedAuthority("ROLE_INTAKE")))));
+            // 새 컨텍스트를 만든다. 세션에서 불러온 컨텍스트 객체를 고치면 그 세션(관리자 로그인)이 토큰 권한으로 바뀐다
+            tokens.authenticate(h.substring(7).trim()).ifPresent(name -> {
+                var ctx = SecurityContextHolder.createEmptyContext();
+                ctx.setAuthentication(UsernamePasswordAuthenticationToken.authenticated("intake:" + name, null,
+                        List.of(new SimpleGrantedAuthority("ROLE_INTAKE"))));
+                SecurityContextHolder.setContext(ctx);
+            });
         }
         chain.doFilter(req, res);
     }

@@ -74,6 +74,13 @@ class SecurityIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"shop-a\",\"name\":\"A\"}"))
                 .andExpect(status().isCreated());
 
+        // 같은 세션 쿠키로 확장 토큰 요청이 와도 관리자 세션이 바뀌지 않는다
+        String issued = mvc.perform(post("/api/intake-tokens").session(session).with(SecurityMockMvcRequestPostProcessors.csrf())
+                .contentType(MediaType.APPLICATION_JSON).content("{}")).andReturn().getResponse().getContentAsString();
+        String token = com.jayway.jsonpath.JsonPath.read(issued, "$.token");
+        mvc.perform(get("/api/intake/tenants").session(session).header("Authorization", "Bearer " + token)).andExpect(status().isOk());
+        mvc.perform(get("/api/tenants").session(session)).andExpect(status().isOk());
+
         mvc.perform(post("/api/auth/logout").session(session).with(SecurityMockMvcRequestPostProcessors.csrf()))
                 .andExpect(status().isNoContent());
         mvc.perform(get("/api/tenants").session(session)).andExpect(status().isUnauthorized());
