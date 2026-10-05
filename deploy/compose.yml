@@ -40,6 +40,15 @@ services:
       <<: *app-env
       SPRING_PROFILES_ACTIVE: worker
 
+  # Cloudflare Tunnel: 공유기 포트를 열지 않고 https://<도메인> 을 nginx 로 잇는다.
+  # 토큰은 /opt/autoreg/cf-tunnel.env (TUNNEL_TOKEN=...), 공개 호스트명은 Cloudflare 대시보드에서 http://nginx:80 으로 지정
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    env_file: cf-tunnel.env
+    depends_on: [nginx]
+
   redis:
     image: redis:7
     restart: unless-stopped
