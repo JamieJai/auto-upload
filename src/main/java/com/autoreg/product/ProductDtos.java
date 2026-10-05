@@ -68,10 +68,11 @@ public final class ProductDtos {
     }
 
     public record ImageResponse(Long id, String slot, int seq, String path, String thumbPath, String sourceType,
-            String sourceUrl, Integer width, Integer height) {
+            String sourceUrl, Integer width, Integer height, String sha256, String originalPath, String watermarkTemplate) {
         static ImageResponse of(ProductImage i) {
             return new ImageResponse(i.getId(), i.getSlot().value(), i.getSeq(), i.getPath(), i.getThumbPath(),
-                    i.getSourceType().name(), i.getSourceUrl(), i.getWidth(), i.getHeight());
+                    i.getSourceType().name(), i.getSourceUrl(), i.getWidth(), i.getHeight(), i.getSha256(),
+                    i.getOriginalPath(), i.getWatermarkTemplate());
         }
     }
 

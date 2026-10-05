@@ -53,6 +53,11 @@ public class ProductImage {
 
     private String sha256;
 
+    /** 워터마크를 지웠으면 원본 경로 (되돌리기용) */
+    private String originalPath;
+
+    private String watermarkTemplate;
+
     @CreationTimestamp
     private OffsetDateTime createdAt;
 }

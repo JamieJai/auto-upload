@@ -47,6 +47,7 @@ public class ExtractJobHandler {
     private final JobService jobs;
     private final TransactionTemplate tx;
     private final JsonMapper json;
+    private final com.autoreg.watermark.WatermarkService watermarks;
 
     /** 사람이 손대지 않은 값: 비어 있거나 판매자 기본값과 같다 */
     static boolean untouched(String current, Tenant t, String noticeKey) {
@@ -54,6 +55,19 @@ public class ExtractJobHandler {
     }
 
     public void handle(Job job) {
+        String template = tx.execute(s -> sources.findById(job.getProductId()).map(ProductSource::getWatermarkTemplate).orElse(null));
+        if (template != null) {
+            jobs.step(job.getId(), "WATERMARK", "워터마크 제거 (" + template + ")");
+            try {
+                var r = watermarks.apply(job.getTenantId(), job.getProductId(), template);
+                jobs.log(job.getId(), "WATERMARK", r.errors().isEmpty() ? com.autoreg.job.JobLog.Level.INFO : com.autoreg.job.JobLog.Level.WARN,
+                        "워터마크 제거 " + r.processed() + "장, 크기가 달라 건너뜀 " + r.skipped() + "장"
+                                + (r.errors().isEmpty() ? "" : " / 실패: " + String.join("; ", r.errors())), null);
+            } catch (RuntimeException e) {
+                // 워터마크는 실패해도 값 추출은 계속한다 (사람이 사진 화면에서 다시 시도)
+                jobs.log(job.getId(), "WATERMARK", com.autoreg.job.JobLog.Level.WARN, "워터마크 제거 실패: " + e.getMessage(), null);
+            }
+        }
         jobs.step(job.getId(), "EXTRACT", "도매처 원문에서 값 추출");
         String done = tx.execute(s -> {
             Product p = products.findByIdAndTenantId(job.getProductId(), job.getTenantId())

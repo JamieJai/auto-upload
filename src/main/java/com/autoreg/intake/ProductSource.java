@@ -35,6 +35,9 @@ public class ProductSource {
     /** 원문과 대조해 버린 값 등 사람이 봐야 할 메모 */
     private String notes;
 
+    /** 받을 때 고른 워터마크 템플릿. 워커가 원문 추출 전에 적용한다 */
+    private String watermarkTemplate;
+
     private OffsetDateTime capturedAt = OffsetDateTime.now();
 
     private OffsetDateTime extractedAt;

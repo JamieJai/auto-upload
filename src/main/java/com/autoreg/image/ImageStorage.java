@@ -54,6 +54,41 @@ public class ImageStorage {
         return new Stored(rel, thumbRel, img.getWidth(), img.getHeight(), sha256(bytes));
     }
 
+    /** 파일 내용이 바뀐 뒤(워터마크 제거·되돌리기) 썸네일·크기·해시를 다시 만든다 */
+    public Stored refresh(String relPath, String thumbRel) {
+        byte[] bytes;
+        try {
+            bytes = Files.readAllBytes(resolve(relPath));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        BufferedImage img = read(bytes);
+        writeThumb(img, resolve(thumbRel));
+        return new Stored(relPath, thumbRel, img.getWidth(), img.getHeight(), sha256(bytes));
+    }
+
+    /** relPath 파일을 같은 폴더의 orig/ 로 옮기고 그 경로를 돌려준다 (이미 있으면 그대로) */
+    public String moveToOriginals(String relPath) {
+        Path src = resolve(relPath);
+        String origRel = relPath.substring(0, relPath.lastIndexOf('/') + 1) + "orig/" + relPath.substring(relPath.lastIndexOf('/') + 1);
+        Path dst = resolve(origRel);
+        try {
+            Files.createDirectories(dst.getParent());
+            Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return origRel;
+    }
+
+    public void moveBack(String origRel, String relPath) {
+        try {
+            Files.move(resolve(origRel), resolve(relPath), StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     public Path unmatchedDir(String tenantCode) {
         return resolve(tenantCode + "/_unmatched");
     }

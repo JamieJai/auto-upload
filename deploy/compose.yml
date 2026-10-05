@@ -40,6 +40,17 @@ services:
       <<: *app-env
       SPRING_PROFILES_ACTIVE: worker
 
+  # 이미지 처리 (워터마크 템플릿 추정·제거). 내부망 전용, 포트를 열지 않는다
+  imaging:
+    build: ./backend/imaging
+    image: autoreg-imaging:latest
+    restart: unless-stopped
+    user: "1000:1000"
+    environment:
+      DATA_ROOT: /data
+    volumes:
+      - /data:/data
+
   # Cloudflare Tunnel: 공유기 포트를 열지 않고 https://<도메인> 을 nginx 로 잇는다.
   # 토큰은 /opt/autoreg/cf-tunnel.env (TUNNEL_TOKEN=...), 공개 호스트명은 Cloudflare 대시보드에서 http://nginx:80 으로 지정
   cloudflared:

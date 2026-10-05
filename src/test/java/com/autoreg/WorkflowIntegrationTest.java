@@ -158,8 +158,44 @@ class WorkflowIntegrationTest {
         }
     }
 
+    /** 이미지 처리 서비스 흉내: 템플릿 600x800 하나, 제거는 파일을 그대로 복사하고 기록만 한다 */
+    static class FakeImaging extends com.autoreg.watermark.ImagingClient {
+        final List<String> removed = new ArrayList<>();
+
+        FakeImaging() {
+            super("http://unused", JsonMapper.builder().build());
+        }
+
+        @Override
+        public List<Template> templates() {
+            return List.of(new Template("sinsang", 600, 800, 18, 9));
+        }
+
+        @Override
+        public Template estimate(String name, List<String> paths) {
+            return new Template(name, 600, 800, paths.size(), 9);
+        }
+
+        @Override
+        public void remove(String template, String src, String dst) {
+            try {
+                Files.copy(imageRoot.resolve(src.substring("images/".length())), imageRoot.resolve(dst.substring("images/".length())),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException(e);
+            }
+            removed.add(dst);
+        }
+    }
+
     @TestConfiguration
     static class Fakes {
+        @Bean
+        @Primary
+        FakeImaging fakeImaging() {
+            return new FakeImaging();
+        }
+
         @Bean
         @Primary
         FakeLlm fakeLlm() {
@@ -177,6 +213,7 @@ class WorkflowIntegrationTest {
     @Autowired JobWorker worker;
     @Autowired FakeLlm llm;
     @Autowired FakeChannel channel;
+    @Autowired FakeImaging imaging;
 
     MockMvc mvc;
     long tenant;
@@ -520,6 +557,64 @@ class WorkflowIntegrationTest {
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/api/intake-tokens/{id}", tokenId))
                 .andExpect(status().isNoContent());
         ext.perform(get("/api/intake/tenants").header("Authorization", "Bearer " + token)).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void watermarkTemplateApplyAndRestore() throws Exception {
+        long p = completeProduct("WM1");
+        // 크기가 다른 사진 하나 (템플릿과 안 맞아 건너뛴다)
+        var req = multipart("/api/tenants/{t}/products/{id}/images", tenant, p).param("slot", "detail");
+        var out = new ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(300, 300, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", out);
+        req.file(new MockMultipartFile("files", "small.png", "image/png", out.toByteArray()));
+        mvc.perform(req).andExpect(status().isOk());
+
+        mvc.perform(json(post("/api/watermarks"), "{\"name\":\"sinsang\",\"tenantId\":" + tenant + ",\"productId\":" + p + "}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.samples").value(6));
+        imaging.removed.clear();
+        mvc.perform(json(post("/api/tenants/{t}/products/{id}/watermark", tenant, p), "{\"template\":\"sinsang\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.processed").value(6))
+                .andExpect(jsonPath("$.skipped").value(1));
+        assertThat(imageRoot.resolve("shop-a/WM1/orig/main_01.png")).exists();
+        String detail = mvc.perform(get("/api/tenants/{t}/products/{id}", tenant, p)).andReturn().getResponse().getContentAsString();
+        List<Number> wmIds = JsonPath.read(detail, "$.images[?(@.watermarkTemplate=='sinsang')].id");
+        assertThat(wmIds).hasSize(6);
+        // 두 번 적용해도 다시 처리하지 않는다
+        mvc.perform(json(post("/api/tenants/{t}/products/{id}/watermark", tenant, p), "{\"template\":\"sinsang\"}"))
+                .andExpect(jsonPath("$.processed").value(0));
+        mvc.perform(post("/api/tenants/{t}/products/{id}/images/{img}/restore", tenant, p, wmIds.get(0))).andExpect(status().isOk());
+        String after = mvc.perform(get("/api/tenants/{t}/products/{id}", tenant, p)).andReturn().getResponse().getContentAsString();
+        List<Number> left = JsonPath.read(after, "$.images[?(@.watermarkTemplate=='sinsang')].id");
+        assertThat(left).hasSize(5);
+        try (var files = Files.list(imageRoot.resolve("shop-a/WM1/orig"))) {
+            assertThat(files.count()).isEqualTo(5);
+        }
+        mvc.perform(json(post("/api/tenants/{t}/products/{id}/watermark", tenant, p), "{\"template\":\"nope\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void intakeWithWatermarkTemplateCleansBeforeExtraction() throws Exception {
+        String issued = mvc.perform(json(post("/api/intake-tokens"), "{}")).andReturn().getResponse().getContentAsString();
+        String token = JsonPath.read(issued, "$.token");
+        MockMvc ext = MockMvcBuilders.webAppContextSetup(context)
+                .apply(org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity()).build();
+        ext.perform(get("/api/intake/watermarks").header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$[0].name").value("sinsang"));
+        var meta = new MockMultipartFile("meta", "", "application/json", ("""
+                {"tenantId":%d,"url":"https://sinsangmarket.kr/goods/9","title":"t","text":"원피스 도매가 18,000원 블랙 FREE 면 100%% 총장 108",
+                 "images":[{"url":"u1","slot":"main"},{"url":"u2","slot":"detail"}],"watermarkTemplate":"sinsang"}"""
+                .formatted(tenant)).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String res = ext.perform(multipart("/api/intake/products").file(meta).file(png("a.png")).file(png("b.png"))
+                .header("Authorization", "Bearer " + token)).andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long id = ((Number) JsonPath.read(res, "$.productId")).longValue();
+        imaging.removed.clear();
+        worker.poll();
+        assertThat(imaging.removed).hasSize(2);
+        mvc.perform(get("/api/tenants/{t}/products/{id}", tenant, id))
+                .andExpect(jsonPath("$.images[0].watermarkTemplate").value("sinsang"))
+                .andExpect(jsonPath("$.images[0].originalPath").value(containsString("/orig/")));
     }
 
     // ---- helpers ----

@@ -49,7 +49,8 @@ public class IntakeService {
 
     public record ImageMeta(String url, String slot) {}
 
-    public record Meta(Long tenantId, String url, String title, String text, List<ImageMeta> images) {}
+    /** watermarkTemplate: 고르면 워커가 원문 추출 전에 템플릿 크기와 같은 사진의 워터마크를 지운다 */
+    public record Meta(Long tenantId, String url, String title, String text, List<ImageMeta> images, String watermarkTemplate) {}
 
     public record Result(Long productId, String code, int imageCount, List<String> warnings) {}
 
@@ -92,6 +93,7 @@ public class IntakeService {
         s.setSourceUrl(meta.url());
         s.setTitle(meta.title());
         s.setRawText(text.length() > MAX_TEXT ? text.substring(0, MAX_TEXT) : text);
+        s.setWatermarkTemplate(meta.watermarkTemplate() == null || meta.watermarkTemplate().isBlank() ? null : meta.watermarkTemplate().strip());
         sources.save(s);
         jobs.enqueue(t.getId(), id, JobType.EXTRACT, null);
         return new Result(id, code, attached, warnings);
