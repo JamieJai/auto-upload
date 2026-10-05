@@ -9,7 +9,7 @@ public enum ImageSlot {
     MAIN("main", 1, "대표 이미지"),
     SUB("sub", 2, "연출컷"),
     DETAIL("detail", 2, "원단·디테일"),
-    SIZE("size", 1, "실측 사이즈표");
+    SIZE("size", 0, "실측 사이즈표");
 
     private final String value;
     private final int minCount;

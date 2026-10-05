@@ -8,9 +8,26 @@
      (J 는 각 사진에서 워터마크 자리를 주변으로 메운 값. 255 로 잘린 표본은 뺀다)
 제거: J = (I - b) / g. 정보가 잘린 픽셀과 글자 테두리만 주변으로 메우되, 밝은 배경에서는 메우지 않는다.
 """
+import os
+import threading
+
 import numpy as np
 import cv2
 from scipy.fft import dstn, idstn
+
+MODEL = os.environ.get("LAMA_MODEL", "/data/models/lama_fp32.onnx")
+_sess = None
+_lock = threading.Lock()
+
+
+def _lama():
+    """LaMa 인페인팅 (ONNX, CPU). 모델 파일이 없으면 None → 리터치 없이 1차 보정만"""
+    global _sess
+    with _lock:
+        if _sess is None and os.path.exists(MODEL):
+            import onnxruntime as ort
+            _sess = ort.InferenceSession(MODEL, providers=["CPUExecutionProvider"])
+        return _sess
 
 
 def _poisson(gx, gy):
@@ -155,7 +172,50 @@ def _maps(t, H, W):
     return g, b, s
 
 
-def remove(t, im):
+def _inpaint512(sess, crop, mask):
+    img = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    names = [i.name for i in sess.get_inputs()]
+    out = sess.run(None, {names[0]: img.transpose(2, 0, 1)[None], names[1]: mask.astype(np.float32)[None, None]})[0][0]
+    out = out.transpose(1, 2, 0)
+    if out.max() <= 1.5:
+        out = out * 255.0
+    return cv2.cvtColor(np.clip(out, 0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+
+
+def retouch(t, clean):
+    """리터치: 1차 보정 뒤 글자 획 자리만 LaMa 로 다시 그린다. 도장마다 주변 맥락을 포함해 잘라 512 로 처리"""
+    sess = _lama()
+    if sess is None:
+        return clean
+    H, W = clean.shape[:2]
+    _, _, s = _maps(t, H, W)
+    stroke = cv2.dilate((s > 0.12).astype(np.uint8), np.ones((5, 5), np.uint8))
+    out = clean.copy()
+    th, tw = t["tile"].shape
+    for x, y in t["locs"]:
+        cx, cy = int(x) + tw // 2, int(y) + th // 2
+        half = max(th, tw) // 2 + 40
+        x0, y0, x1, y1 = max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)
+        if x1 - x0 < 32 or y1 - y0 < 32:
+            continue
+        m = stroke[y0:y1, x0:x1]
+        if m.sum() == 0:
+            continue
+        crop = out[y0:y1, x0:x1]
+        res = _inpaint512(sess, cv2.resize(crop, (512, 512), interpolation=cv2.INTER_AREA),
+                          (cv2.resize(m, (512, 512), interpolation=cv2.INTER_NEAREST) > 0).astype(np.uint8))
+        res = cv2.resize(res, (x1 - x0, y1 - y0), interpolation=cv2.INTER_CUBIC)
+        a = cv2.GaussianBlur(m.astype(np.float32), (5, 5), 0)[..., None]
+        out[y0:y1, x0:x1] = (res * a + crop * (1 - a)).astype(np.uint8)
+    return out
+
+
+def remove(t, im, do_retouch=True):
+    out = _remove(t, im)
+    return retouch(t, out) if do_retouch else out
+
+
+def _remove(t, im):
     H, W = im.shape[:2]
     if (W, H) != tuple(int(v) for v in t["size"]):
         raise ValueError("템플릿 크기(%dx%d)와 사진 크기(%dx%d)가 다릅니다" % (t["size"][0], t["size"][1], W, H))

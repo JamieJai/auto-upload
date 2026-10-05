@@ -23,7 +23,8 @@ public class WatermarkController {
     public record CreateRequest(@NotBlank @Pattern(regexp = "^[a-z0-9_-]{2,60}$", message = "영문 소문자·숫자·_- 2~60자") String name,
             @NotNull Long tenantId, @NotNull Long productId) {}
 
-    public record ApplyRequest(@NotBlank String template) {}
+    /** redo: 이미 지운 사진도 원본에서 다시 (리터치가 바뀌었을 때) */
+    public record ApplyRequest(@NotBlank String template, Boolean redo) {}
 
     @GetMapping("/api/watermarks")
     public List<ImagingClient.Template> list() {
@@ -43,7 +44,7 @@ public class WatermarkController {
 
     @PostMapping("/api/tenants/{tenantId}/products/{id}/watermark")
     public WatermarkService.Applied apply(@PathVariable Long tenantId, @PathVariable Long id, @Valid @RequestBody ApplyRequest req) {
-        return service.apply(tenantId, id, req.template());
+        return service.apply(tenantId, id, req.template(), Boolean.TRUE.equals(req.redo()));
     }
 
     @PostMapping("/api/tenants/{tenantId}/products/{id}/images/{imageId}/restore")

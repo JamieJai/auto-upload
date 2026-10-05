@@ -40,7 +40,8 @@ public class ImagingClient {
     }
 
     public void remove(String template, String srcDataPath, String dstDataPath) {
-        call("POST", "/remove", Map.of("template", template, "src", srcDataPath, "dst", dstDataPath), Duration.ofMinutes(1));
+        // 리터치(LaMa, CPU)는 사진 한 장에 20초 안팎
+        call("POST", "/remove", Map.of("template", template, "src", srcDataPath, "dst", dstDataPath), Duration.ofMinutes(4));
     }
 
     private String call(String method, String path, Object body, Duration timeout) {

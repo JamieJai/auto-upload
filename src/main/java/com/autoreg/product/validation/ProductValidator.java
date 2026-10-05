@@ -42,9 +42,9 @@ public class ProductValidator {
         List<ValidationIssue> issues = new ArrayList<>();
         checkBasics(p, issues);
         checkOptions(p, issues);
-        checkMeasurements(p, issues);
+        checkMeasurements(p, issues, style.getRules().isRequireMeasurements());
         checkNotice(p, issues);
-        checkImages(p, issues);
+        checkImages(p, issues, style);
         if (phase == ValidationPhase.READY) {
             checkTexts(p, issues, style);
         }
@@ -89,12 +89,12 @@ public class ProductValidator {
     }
 
     /** 옵션에 있는 사이즈마다 실측이 하나 이상 있어야 한다 */
-    private static void checkMeasurements(Product p, List<ValidationIssue> issues) {
+    private static void checkMeasurements(Product p, List<ValidationIssue> issues, boolean required) {
         Set<String> sizes = p.getOptions().stream().map(ProductOption::getSize).filter(s -> !blank(s))
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         Map<String, ProductMeasurement> bySize = p.getMeasurements().stream()
                 .collect(Collectors.toMap(ProductMeasurement::getSize, m -> m, (a, b) -> a));
-        for (String size : sizes) {
+        for (String size : required ? sizes : Set.<String>of()) {
             ProductMeasurement m = bySize.get(size);
             boolean hasValue = m != null && m.getMeasures().values().stream()
                     .anyMatch(v -> v != null && v.compareTo(BigDecimal.ZERO) > 0);
@@ -123,12 +123,13 @@ public class ProductValidator {
         }
     }
 
-    private static void checkImages(Product p, List<ValidationIssue> issues) {
+    private static void checkImages(Product p, List<ValidationIssue> issues, StyleProfile style) {
         for (ImageSlot slot : ImageSlot.values()) {
             long count = p.getImages().stream().filter(i -> i.getSlot() == slot).count();
-            if (count < slot.minCount()) {
+            int min = style.getRules().minImages(slot.value());
+            if (count < min) {
                 issues.add(new ValidationIssue("images." + slot.value(), "IMAGE_SLOT_SHORT",
-                        slot.label() + " 이미지가 " + slot.minCount() + "장 이상 필요합니다 (현재 " + count + "장)"));
+                        slot.label() + " 이미지가 " + min + "장 이상 필요합니다 (현재 " + count + "장)"));
             }
         }
     }

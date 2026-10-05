@@ -42,10 +42,22 @@ public class ProductValidatorTest {
     }
 
     @Test
-    void everyOptionSizeNeedsMeasurement() {
+    void measurementsAndSizeImageAreOptionalByDefault() {
+        Product p = complete();
+        p.getMeasurements().clear();
+        p.getImages().removeIf(i -> i.getSlot() == ImageSlot.SIZE);
+        assertThat(validator.validate(p, ValidationPhase.INPUT)).isEmpty();
+    }
+
+    @Test
+    void styleCanRequireMeasurementsAndSizeImage() {
         Product p = complete();
         p.getMeasurements().removeIf(m -> m.getSize().equals("L"));
-        assertThat(codes(validator.validate(p, ValidationPhase.INPUT))).containsExactly("measurements.L");
+        p.getImages().removeIf(i -> i.getSlot() == ImageSlot.SIZE);
+        var style = new com.autoreg.tenant.StyleProfile();
+        style.getRules().setRequireMeasurements(true);
+        style.getRules().getMinImages().put("size", 1);
+        assertThat(codes(validator.validate(p, ValidationPhase.INPUT, style))).containsExactlyInAnyOrder("measurements.L", "images.size");
     }
 
     @Test
@@ -117,7 +129,7 @@ public class ProductValidatorTest {
             p.getMeasurements().add(m);
         }
         for (ImageSlot slot : ImageSlot.values()) {
-            for (int seq = 1; seq <= slot.minCount(); seq++) {
+            for (int seq = 1; seq <= Math.max(1, slot.minCount()); seq++) {
                 ProductImage i = new ProductImage();
                 i.setSlot(slot);
                 i.setSeq(seq);

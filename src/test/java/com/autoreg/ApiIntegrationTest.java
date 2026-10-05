@@ -105,7 +105,6 @@ class ApiIntegrationTest {
         mvc.perform(get("/api/tenants/{t}/products/{id}/validation", tenant, id))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.ok").value(false))
-                .andExpect(jsonPath("$.issues[*].field", hasItem("measurements.M")))
                 .andExpect(jsonPath("$.issues[*].field", hasItem("images.detail")))
                 .andExpect(jsonPath("$.issues[*].field", not(hasItem("notice.manufacturer"))));
 

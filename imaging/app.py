@@ -2,7 +2,7 @@
 
 POST /templates   {"name", "images": [path...]}  → 같은 크기 사진들로 워터마크 템플릿 추정, /data/watermarks/{name}.npz
 GET  /templates                                   → 템플릿 목록 (이름, 크기, 표본 수)
-POST /remove      {"template", "src", "dst"}      → src 의 워터마크를 지워 dst 에 JPEG 로 저장
+POST /remove      {"template", "src", "dst", "retouch"?} → src 의 워터마크를 지워(리터치 포함) dst 에 JPEG 로 저장
 """
 import json, os, re, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -79,7 +79,7 @@ class H(BaseHTTPRequestHandler):
                 im = cv2.imread(safe(req["src"]), cv2.IMREAD_COLOR)
                 if im is None:
                     raise ValueError("사진을 읽을 수 없습니다")
-                out = wm.remove(t, im)
+                out = wm.remove(t, im, bool(req.get("retouch", True)))
                 dst = safe(req["dst"])
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 tmp = dst + ".tmp.jpg"

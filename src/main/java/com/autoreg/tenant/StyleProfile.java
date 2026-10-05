@@ -53,6 +53,23 @@ public class StyleProfile {
     private Images images = new Images();
     private Detail detail = new Detail();
     private Registration registration = new Registration();
+    private Rules rules = new Rules();
+
+    /** 제출 전 검증에서 무엇을 필수로 볼지 */
+    @Data
+    @NoArgsConstructor
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Rules {
+        /** 옵션 사이즈마다 실측이 있어야 제출 가능. 기본은 선택 (없으면 상세페이지 실측표가 빠진다) */
+        private boolean requireMeasurements = false;
+        /** 슬롯별 최소 장수 (main·sub·detail·size). 사이즈표 이미지는 기본 선택(0) */
+        private Map<String, Integer> minImages = new LinkedHashMap<>(Map.of("main", 1, "sub", 2, "detail", 2, "size", 0));
+
+        public int minImages(String slot) {
+            Integer v = minImages.get(slot);
+            return v == null ? 0 : Math.max(0, v);
+        }
+    }
 
     @Data
     @NoArgsConstructor
@@ -192,6 +209,9 @@ public class StyleProfile {
         if (registration.discountValue < 0 || !List.of("PERCENT", "WON").contains(registration.discountUnit)
                 || ("PERCENT".equals(registration.discountUnit) && registration.discountValue >= 100)) {
             throw new IllegalArgumentException("할인 값이 올바르지 않습니다");
+        }
+        if (rules.minImages("main") < 1) {
+            throw new IllegalArgumentException("대표 이미지는 1장 이상이어야 합니다");
         }
         if (detail.blocks.isEmpty()) {
             throw new IllegalArgumentException("상세페이지 구성은 한 블록 이상이어야 합니다");

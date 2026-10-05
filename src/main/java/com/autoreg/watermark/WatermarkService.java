@@ -53,9 +53,14 @@ public class WatermarkService {
         return imaging.estimate(name, paths);
     }
 
-    /** 템플릿 크기와 같은 사진에서 워터마크를 지운다. 이미 지운 사진은 건너뛴다 */
     @Transactional
     public Applied apply(Long tenantId, Long productId, String template) {
+        return apply(tenantId, productId, template, false);
+    }
+
+    /** 템플릿 크기와 같은 사진에서 워터마크를 지운다. redo 면 이미 지운 사진도 보관한 원본에서 다시 처리한다 */
+    @Transactional
+    public Applied apply(Long tenantId, Long productId, String template, boolean redo) {
         Product p = find(tenantId, productId);
         if (!p.getStatus().editable()) {
             throw new ConflictException("현재 상태(" + p.getStatus() + ")에서는 사진을 바꿀 수 없습니다");
@@ -66,15 +71,18 @@ public class WatermarkService {
         int skipped = 0;
         List<String> errors = new ArrayList<>();
         for (ProductImage img : p.getImages()) {
-            if (img.getOriginalPath() != null || img.getWidth() == null || img.getWidth() != t.width() || img.getHeight() != t.height()) {
+            boolean again = redo && img.getOriginalPath() != null;
+            if ((img.getOriginalPath() != null && !again) || img.getWidth() == null || img.getWidth() != t.width() || img.getHeight() != t.height()) {
                 skipped++;
                 continue;
             }
-            String orig = storage.moveToOriginals(img.getPath());
+            String orig = again ? img.getOriginalPath() : storage.moveToOriginals(img.getPath());
             try {
                 imaging.remove(template, DATA_IMAGES + orig, DATA_IMAGES + img.getPath());
             } catch (RuntimeException e) {
-                storage.moveBack(orig, img.getPath());
+                if (!again) {
+                    storage.moveBack(orig, img.getPath());
+                }
                 errors.add(img.getSlot().value() + " " + img.getSeq() + ": " + e.getMessage());
                 continue;
             }
