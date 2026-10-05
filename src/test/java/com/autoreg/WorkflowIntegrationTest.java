@@ -597,6 +597,18 @@ class WorkflowIntegrationTest {
         try (var files = Files.list(imageRoot.resolve("shop-a/WM1/orig"))) {
             assertThat(files.count()).isEqualTo(5);
         }
+        // 처리 도중 워커가 죽어 DB 엔 기록이 없지만 orig/ 에 원본이 남은 경우: 원본을 덮어쓰지 않고 그걸로 처리한다
+        String restoredPath = jdbc.queryForObject("SELECT path FROM product_image WHERE id = ?", String.class, wmIds.get(0).longValue());
+        java.nio.file.Path origFile = imageRoot.resolve(restoredPath.replaceFirst("/([^/]+)$", "/orig/$1"));
+        byte[] trueOriginal = Files.readAllBytes(imageRoot.resolve(restoredPath));
+        Files.write(origFile, trueOriginal);
+        Files.write(imageRoot.resolve(restoredPath), new byte[] {1, 2, 3});
+        imaging.removed.clear();
+        mvc.perform(json(post("/api/tenants/{t}/products/{id}/watermark", tenant, p), "{\"template\":\"sinsang\"}"));
+        worker.poll();
+        assertThat(imaging.removed).hasSize(1);
+        assertThat(Files.readAllBytes(origFile)).isEqualTo(trueOriginal);
+        assertThat(Files.readAllBytes(imageRoot.resolve(restoredPath))).isEqualTo(trueOriginal); // 깨진 현재 파일이 아니라 원본에서 처리
         mvc.perform(json(post("/api/tenants/{t}/products/{id}/watermark", tenant, p), "{\"template\":\"nope\"}"))
                 .andExpect(status().isBadRequest());
     }

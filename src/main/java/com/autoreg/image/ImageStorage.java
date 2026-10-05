@@ -73,8 +73,12 @@ public class ImageStorage {
         String origRel = relPath.substring(0, relPath.lastIndexOf('/') + 1) + "orig/" + relPath.substring(relPath.lastIndexOf('/') + 1);
         Path dst = resolve(origRel);
         try {
+            // 이미 있으면 그게 진짜 원본이다 (처리 도중 워커가 죽어 DB 에 기록이 안 된 경우). 덮어쓰면 처리본이 원본 자리를 차지한다
+            if (Files.exists(dst)) {
+                return origRel;
+            }
             Files.createDirectories(dst.getParent());
-            Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING);
+            Files.move(src, dst);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

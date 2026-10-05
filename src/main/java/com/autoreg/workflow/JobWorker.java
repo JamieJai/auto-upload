@@ -36,7 +36,8 @@ public class JobWorker {
 
     @EventListener(ApplicationReadyEvent.class)
     public void recover() {
-        int n = jobs.recoverStale(Duration.ofMinutes(10));
+        // 워커는 하나뿐이라 시작 시점에 RUNNING 인 작업은 모두 이전 프로세스가 하다 만 것이다
+        int n = jobs.recoverStale(Duration.ZERO);
         if (n > 0) {
             log.warn("recovered {} stale RUNNING jobs", n);
         }
