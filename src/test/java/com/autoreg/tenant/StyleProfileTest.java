@@ -159,4 +159,16 @@ class StyleProfileTest {
         assertThat(html.indexOf("<table")).isLessThan(html.indexOf("<p ")).isLessThan(html.indexOf("u/detail1"));
         assertThat(html).doesNotContain("u/size1"); // 사이즈표 이미지 블록을 빼면 상세에서도 빠진다
     }
+
+    @Test
+    void sourceNameOnlyEnglishBecomesKorean() {
+        StyleProfile s = new StyleProfile();
+        s.getCopy().setRemoveParentheses(true);
+        s.getCopy().setReplacements(new java.util.LinkedHashMap<>(java.util.Map.of("mtm", "맨투맨")));
+        String cleaned = s.cleanName("무디 mtm(브이,레이스,맨투맨)");
+        assertThat(cleaned).isEqualTo("무디 맨투맨");
+        var k = StyleProfile.koreanize("러블리 V넥 KNIT 가디건 Zara", java.util.Map.of("v", "브이", "knit", "니트"));
+        assertThat(k.name()).isEqualTo("러블리 브이넥 니트 가디건 Zara");
+        assertThat(k.missing()).containsExactly("Zara");
+    }
 }

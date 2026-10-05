@@ -89,6 +89,13 @@ public class ExtractJobHandler {
             com.autoreg.tenant.StyleProfile style = t.styleProfile();
             if ((p.getName() == null || p.getName().isBlank()) && "SOURCE".equals(style.getCopy().getNameSource()) && ex.nameHint() != null) {
                 String name = style.cleanName(ex.nameHint());
+                if (style.getCopy().isTranslateEnglish()) {
+                    var k = com.autoreg.tenant.StyleProfile.koreanize(name, ex.englishWords());
+                    name = k.name();
+                    if (!k.missing().isEmpty()) {
+                        filled.add("상품명 영어 중 번역 못 한 단어(" + String.join(", ", k.missing()) + ")는 그대로 둠");
+                    }
+                }
                 if (!name.isBlank()) {
                     p.setName(name);
                     p.getFieldSources().put(com.autoreg.product.TextField.NAME, com.autoreg.product.TextField.Source.SOURCE);

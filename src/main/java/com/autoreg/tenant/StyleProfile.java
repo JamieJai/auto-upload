@@ -93,6 +93,8 @@ public class StyleProfile {
         private boolean removeParentheses = false;
         /** 단어 바꾸기 (대소문자 무시). 예: {"mtm": "맨투맨"}. AI 로 만든 상품명에도 적용 */
         private Map<String, String> replacements = new LinkedHashMap<>();
+        /** 원문 상품명의 영어 단어를 한국어로 (mtm→맨투맨, ops→원피스). 단어 바꾸기에 있는 말은 그쪽이 먼저 */
+        private boolean translateEnglish = false;
     }
 
     @Data
@@ -258,6 +260,31 @@ public class StyleProfile {
             n = n.replaceAll("\\([^)]*\\)", " ");
         }
         return replaceWords(n).replaceAll("\\s+", " ").strip();
+    }
+
+    /** 영어 단어 → 한국어 결과. missing 은 번역을 못 찾아 그대로 둔 단어 */
+    public record Koreanized(String name, List<String> missing) {}
+
+    /**
+     * 남은 영어 단어(알파벳 연속)를 dictionary 로 바꾼다. 영어만 바꾸고 나머지 글자는 그대로 둔다.
+     * dictionary 키는 대소문자 무시
+     */
+    public static Koreanized koreanize(String name, Map<String, String> dictionary) {
+        Map<String, String> dict = new java.util.HashMap<>();
+        dictionary.forEach((k, v) -> dict.put(k.toLowerCase(Locale.ROOT), v));
+        List<String> missing = new ArrayList<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("[A-Za-z]+").matcher(name);
+        StringBuilder out = new StringBuilder();
+        while (m.find()) {
+            String ko = dict.get(m.group().toLowerCase(Locale.ROOT));
+            if (ko == null) {
+                missing.add(m.group());
+                ko = m.group();
+            }
+            m.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(ko));
+        }
+        m.appendTail(out);
+        return new Koreanized(out.toString().replaceAll("\\s+", " ").strip(), missing);
     }
 
     public String replaceWords(String n) {

@@ -33,11 +33,14 @@ public class SourceExtractor {
             4. 실측은 사이즈별로 부위(총장, 어깨너비, 가슴단면 등)와 cm 값을 옮긴다. 단면/둘레 표기는 글 그대로 둔다.
             5. 카테고리는 주어진 목록 중 하나만 고르고, 맞는 게 없으면 null.
             6. nameHint 는 페이지에 적힌 상품명을 글자 그대로 옮긴다 (괄호·영문 약어 포함, 고치지 않는다).
+            7. englishWords 에는 nameHint 에 나오는 영어 단어·약어(알파벳 덩어리)마다, 한국 여성의류 쇼핑몰에서 쓰는
+               한글 표기를 적는다. 예: mtm→맨투맨, ops→원피스, knit→니트, cardigan→가디건, v→브이, pk→피케.
+               ko 는 한글로만 쓴다.
             JSON 으로만 답한다.""";
 
     static final String SCHEMA = """
             {"type":"object","additionalProperties":false,
-             "required":["wholesalePrice","colors","sizes","material","originCountry","washCare","category","measurements","nameHint"],
+             "required":["wholesalePrice","colors","sizes","material","originCountry","washCare","category","measurements","nameHint","englishWords"],
              "properties":{
               "wholesalePrice":{"type":["integer","null"]},
               "colors":{"type":"array","items":{"type":"string"}},
@@ -47,6 +50,8 @@ public class SourceExtractor {
               "washCare":{"type":["string","null"]},
               "category":{"type":["string","null"]},
               "nameHint":{"type":["string","null"]},
+              "englishWords":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["en","ko"],
+                "properties":{"en":{"type":"string"},"ko":{"type":"string"}}}},
               "measurements":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["size","parts"],
                 "properties":{"size":{"type":"string"},"parts":{"type":"array","items":{"type":"object","additionalProperties":false,
                   "required":["part","cm"],"properties":{"part":{"type":"string"},"cm":{"type":"number"}}}}}}}
@@ -56,7 +61,7 @@ public class SourceExtractor {
 
     /** 원문과 대조를 마친 결과 */
     public record Extracted(Integer wholesalePrice, List<String> colors, List<String> sizes, String material,
-            String originCountry, String washCare, String category, String nameHint,
+            String originCountry, String washCare, String category, String nameHint, Map<String, String> englishWords,
             Map<String, Map<String, BigDecimal>> measurements, List<String> dropped, JsonNode raw) {}
 
     public Extracted extract(String title, String text, List<String> categories) {
@@ -116,8 +121,19 @@ public class SourceExtractor {
         if (category != null && !categories.contains(category)) {
             category = null;
         }
+        String nameHint = text(out, "nameHint");
+        // 상품명에 실제로 있는 영어 단어만, 한글로 된 번역만 받는다
+        Map<String, String> english = new LinkedHashMap<>();
+        String lowerHint = nameHint == null ? "" : nameHint.toLowerCase(java.util.Locale.ROOT);
+        for (JsonNode w : out.path("englishWords")) {
+            String en = w.path("en").asString("").strip();
+            String ko = w.path("ko").asString("").strip();
+            if (en.matches("[A-Za-z]+") && lowerHint.contains(en.toLowerCase(java.util.Locale.ROOT)) && ko.matches("[가-힣 ]+")) {
+                english.put(en, ko);
+            }
+        }
         return new Extracted(price, list(out, "colors"), list(out, "sizes"), material, text(out, "originCountry"),
-                text(out, "washCare"), category, text(out, "nameHint"), measures, dropped, out);
+                text(out, "washCare"), category, nameHint, english, measures, dropped, out);
     }
 
     /** 원문에 나오는 숫자들 ("48.5", "18,000" → "18000", "48.50" → "48.5") */
