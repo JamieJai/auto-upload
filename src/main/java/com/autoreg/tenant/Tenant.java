@@ -51,6 +51,19 @@ public class Tenant {
     @JdbcTypeCode(SqlTypes.JSON)
     private Map<String, Object> priceRule;
 
+    /** 특성 (StyleProfile 을 JSON 으로). 비어 있으면 기본 규칙 */
+    @JdbcTypeCode(SqlTypes.JSON)
+    private Map<String, Object> style = new HashMap<>();
+
+    /** 특성을 복사해 온 판매자 ("원본에서 다시 덮어쓰기" 용) */
+    private Long styleSourceTenantId;
+
+    private OffsetDateTime styleCopiedAt;
+
+    public StyleProfile styleProfile() {
+        return StyleProfile.from(style);
+    }
+
     private boolean active = true;
 
     @CreationTimestamp

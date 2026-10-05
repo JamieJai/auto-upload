@@ -335,6 +335,41 @@ class ApiIntegrationTest {
         }
     }
 
+    @Test
+    void styleSaveAndCopyKeepsStoreSpecificValues() throws Exception {
+        long a = createTenant("shop-a");
+        long b = createTenant("shop-b");
+        mvc.perform(json(put("/api/tenants/{t}/style", a), """
+                {"tags":{"min":5,"max":10,"textCase":"LOWER"},"options":{"groupName1":"color","groupName2":"size","sizeCase":"LOWER"},
+                 "copy":{"namePrefix":"[A] ","instructions":"상품명 끝에 핏을 쓴다"}}"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.style.tags.min").value(5))
+                .andExpect(jsonPath("$.style.images.maxOptional").value(9));
+        mvc.perform(json(put("/api/tenants/{t}/style", a), """
+                {"tags":{"min":11,"max":10}}""")).andExpect(status().isBadRequest());
+        mvc.perform(json(put("/api/tenants/{t}", a), """
+                {"code":"shop-a","name":"shop-a","brandTone":"반말","priceRule":{"multiplier":2},
+                 "noticeDefaults":{"wash_care":"손세탁","as_phone":"02-111-1111","manufacturer":"A 협력"}}""")).andExpect(status().isOk());
+        mvc.perform(json(put("/api/tenants/{t}", b), """
+                {"code":"shop-b","name":"shop-b","noticeDefaults":{"as_phone":"02-222-2222"}}""")).andExpect(status().isOk());
+
+        mvc.perform(json(post("/api/tenants/{t}/style/copy", b), "{\"sourceTenantId\":" + a + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.style.copy.namePrefix").value("[A] "))
+                .andExpect(jsonPath("$.sourceTenantName").value("shop-a"));
+        mvc.perform(get("/api/tenants/{t}", b))
+                .andExpect(jsonPath("$.brandTone").value("반말"))
+                .andExpect(jsonPath("$.priceRule.multiplier").value(2.0))
+                .andExpect(jsonPath("$.noticeDefaults.wash_care").value("손세탁"))
+                .andExpect(jsonPath("$.noticeDefaults.as_phone").value("02-222-2222"))
+                .andExpect(jsonPath("$.noticeDefaults.manufacturer").doesNotExist());
+        // 복사 후엔 따로 고친다
+        mvc.perform(json(put("/api/tenants/{t}/style", b), """
+                {"tags":{"min":10,"max":10}}""")).andExpect(status().isOk());
+        mvc.perform(get("/api/tenants/{t}/style", a)).andExpect(jsonPath("$.style.tags.min").value(5));
+        mvc.perform(json(post("/api/tenants/{t}/style/copy", a), "{\"sourceTenantId\":" + a + "}")).andExpect(status().isBadRequest());
+    }
+
     private static org.springframework.mock.web.MockMultipartFile png(String name, int w, int h) throws Exception {
         var img = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
         var out = new java.io.ByteArrayOutputStream();

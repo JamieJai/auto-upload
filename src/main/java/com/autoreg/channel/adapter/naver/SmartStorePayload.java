@@ -18,6 +18,7 @@ import com.autoreg.product.Product;
 import com.autoreg.product.ProductMeasurement;
 import com.autoreg.product.ProductOption;
 import com.autoreg.product.validation.ProductValidator;
+import com.autoreg.tenant.StyleProfile;
 
 /**
  * 상품 → 스마트스토어 등록 본문 (POST /v2/products).
@@ -53,9 +54,15 @@ public final class SmartStorePayload {
      * reference: 품목 레퍼런스 스냅샷(SmartStoreReference.snapshot). 판매 설정은 레퍼런스를 그대로 쓰고,
      * 상품마다 다른 값(이름·가격·재고·이미지·상세·옵션·고시·태그·판매자코드·제조일자·모델명)만 새로 채운다.
      */
-    @SuppressWarnings("unchecked")
     public static Map<String, Object> build(Product p, String categoryId, List<UploadedImage> images, Map<String, Object> settings,
             Map<String, Object> reference) {
+        return build(p, categoryId, images, settings, reference, StyleProfile.legacy(settings));
+    }
+
+    /** style: 판매자 특성. 상품명 앞뒤 문구·옵션 표기·태그·이미지 순서·상세 구성·할인·전시 상태를 정한다 */
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> build(Product p, String categoryId, List<UploadedImage> images, Map<String, Object> settings,
+            Map<String, Object> reference, StyleProfile style) {
         Map<String, Object> base = reference != null ? reference : SmartStoreReference.fromAccountSettings(settings);
         Map<String, Object> baseDetail = base.get("detailAttribute") instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
         List<String> missing = new ArrayList<>();
@@ -78,32 +85,47 @@ public final class SmartStorePayload {
         if (mains.isEmpty()) {
             throw ChannelException.invalid("대표 이미지가 없습니다");
         }
-        List<String> optional = new ArrayList<>(mains.subList(1, mains.size()));
-        optional.addAll(urls(images, ImageSlot.SUB));
+        List<String> optional = new ArrayList<>();
+        for (StyleProfile.ImageGroup g : style.getImages().getOptionalOrder()) {
+            switch (g) {
+                case MAIN_REST -> optional.addAll(mains.subList(1, mains.size()));
+                case SUB -> optional.addAll(urls(images, ImageSlot.SUB));
+                case DETAIL -> optional.addAll(urls(images, ImageSlot.DETAIL));
+                case SIZE -> optional.addAll(urls(images, ImageSlot.SIZE));
+            }
+        }
+        String name = style.finalName(p.getName());
 
         Map<String, Object> origin = new LinkedHashMap<>();
         origin.put("statusType", "SALE");
         origin.put("saleType", "NEW");
         origin.put("leafCategoryId", categoryId);
-        origin.put("name", p.getName());
-        origin.put("detailContent", detailHtml(p, images));
+        origin.put("name", name);
+        origin.put("detailContent", detailHtml(p, images, style));
         origin.put("images", Map.of(
                 "representativeImage", Map.of("url", mains.get(0)),
-                "optionalImages", optional.stream().limit(MAX_OPTIONAL_IMAGES).map(u -> Map.of("url", u)).toList()));
+                "optionalImages", optional.stream().distinct().limit(Math.min(MAX_OPTIONAL_IMAGES, style.getImages().getMaxOptional()))
+                        .map(u -> Map.of("url", u)).toList()));
         origin.put("salePrice", p.getSalePrice());
         origin.put("stockQuantity", p.getOptions().stream().mapToInt(ProductOption::getStock).sum());
         origin.put("deliveryInfo", base.get("deliveryInfo"));
-        origin.put("detailAttribute", detailAttribute(p, baseDetail, settings));
+        origin.put("detailAttribute", detailAttribute(p, baseDetail, style));
+        StyleProfile.Registration reg = style.getRegistration();
+        if (reg.getDiscountValue() > 0) {
+            // 할인이 있을 때만 보낸다. 빈 customerBenefit 은 400
+            origin.put("customerBenefit", Map.of("immediateDiscountPolicy", Map.of("discountMethod",
+                    Map.of("value", reg.getDiscountValue(), "unitType", reg.getDiscountUnit()))));
+        }
 
         Map<String, Object> channel = new LinkedHashMap<>();
         if (base.get("smartstoreChannelProduct") instanceof Map<?, ?> ch) {
             ((Map<String, Object>) ch).forEach(channel::put);
         }
         channel.remove("bbsSeq");
-        channel.put("channelProductName", p.getName());
+        channel.put("channelProductName", name);
         channel.putIfAbsent("naverShoppingRegistration", true);
         channel.putIfAbsent("storeKeepExclusiveProduct", false);
-        channel.put("channelProductDisplayStatusType", settings.getOrDefault("displayStatus", "SUSPENSION"));
+        channel.put("channelProductDisplayStatusType", reg.getDisplayStatus());
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("originProduct", origin);
@@ -111,7 +133,7 @@ public final class SmartStorePayload {
         return body;
     }
 
-    private static Map<String, Object> detailAttribute(Product p, Map<String, Object> ref, Map<String, Object> settings) {
+    private static Map<String, Object> detailAttribute(Product p, Map<String, Object> ref, StyleProfile style) {
         Map<String, Object> d = new LinkedHashMap<>(ref);
         Map<String, Object> search = new LinkedHashMap<>();
         if (ref.get("naverShoppingSearchInfo") instanceof Map<?, ?> m) {
@@ -129,11 +151,11 @@ public final class SmartStorePayload {
                 "afterServiceTelephoneNumber", digits(p.getAsPhone()),
                 "afterServiceGuideContent", p.getAsManager()));
         d.put("sellerCodeInfo", Map.of("sellerManagementCode", p.getCode()));
-        d.put("optionInfo", optionInfo(p, settings));
+        d.put("optionInfo", optionInfo(p, style));
         d.putIfAbsent("taxType", "TAX");
         d.putIfAbsent("minorPurchasable", true);
         d.putIfAbsent("certificationTargetExcludeContent", Map.of("kcCertifiedProductExclusionYn", "TRUE"));
-        d.put("productInfoProvidedNotice", Map.of("productInfoProvidedNoticeType", "WEAR", "wear", wearNotice(p, settings)));
+        d.put("productInfoProvidedNotice", Map.of("productInfoProvidedNoticeType", "WEAR", "wear", wearNotice(p, style)));
         String ym = p.getManufacturedYm();
         if (ym != null && ym.matches("\\d{4}-\\d{2}")) {
             d.put("manufactureDate", ym + "-01");
@@ -141,8 +163,8 @@ public final class SmartStorePayload {
             d.remove("manufactureDate");
         }
         // 태그는 각각 UTF-8 30바이트 미만이어야 한다 (넘으면 400 MaxByteLength). 검증을 통과했어도 한 번 더 거른다
-        List<Map<String, String>> tags = p.getSearchKeywords().stream().filter(ProductValidator::tagFits).limit(MAX_TAGS)
-                .map(k -> Map.of("text", k)).toList();
+        List<Map<String, String>> tags = p.getSearchKeywords().stream().map(style::tag).filter(ProductValidator::tagFits).distinct()
+                .limit(Math.min(MAX_TAGS, style.getTags().getMax())).map(k -> Map.of("text", k)).toList();
         if (tags.isEmpty()) {
             d.remove("seoInfo");
         } else {
@@ -151,14 +173,13 @@ public final class SmartStorePayload {
         return d;
     }
 
-    /** 옵션 그룹명·영문 소문자 여부는 판매자 규칙(settings: optionGroupName1/2, lowercaseOptionValues) */
-    private static Map<String, Object> optionInfo(Product p, Map<String, Object> settings) {
-        boolean lower = Boolean.parseBoolean(String.valueOf(settings.getOrDefault("lowercaseOptionValues", false)));
+    /** 옵션 그룹명·색상·사이즈 표기는 특성을 따른다 */
+    private static Map<String, Object> optionInfo(Product p, StyleProfile style) {
         List<Map<String, Object>> combos = new ArrayList<>();
         for (ProductOption o : p.getOptions()) {
             Map<String, Object> c = new LinkedHashMap<>();
-            c.put("optionName1", optionValue(displayColor(o), lower));
-            c.put("optionName2", optionValue(o.getSize(), lower));
+            c.put("optionName1", style.color(displayColor(o)));
+            c.put("optionName2", style.size(o.getSize()));
             c.put("stockQuantity", o.getStock());
             c.put("price", o.getExtraPrice());
             c.put("usable", true);
@@ -170,23 +191,18 @@ public final class SmartStorePayload {
         Map<String, Object> info = new LinkedHashMap<>();
         info.put("optionCombinationSortType", "CREATE");
         info.put("optionCombinationGroupNames", Map.of(
-                "optionGroupName1", String.valueOf(settings.getOrDefault("optionGroupName1", "색상")),
-                "optionGroupName2", String.valueOf(settings.getOrDefault("optionGroupName2", "사이즈"))));
+                "optionGroupName1", style.getOptions().getGroupName1(),
+                "optionGroupName2", style.getOptions().getGroupName2()));
         info.put("optionCombinations", combos);
         info.put("useStockManagement", true);
         info.put("optionDeliveryAttributes", List.of());
         return info;
     }
 
-    private static String optionValue(String v, boolean lower) {
-        return lower && v != null ? v.toLowerCase(java.util.Locale.ROOT) : v;
-    }
-
     /** 상품정보제공고시 의류(WEAR). 값은 모두 입력값 그대로 (AI 생성 금지 항목) */
-    private static Map<String, Object> wearNotice(Product p, Map<String, Object> settings) {
-        boolean lower = Boolean.parseBoolean(String.valueOf(settings.getOrDefault("lowercaseOptionValues", false)));
-        Set<String> colors = p.getOptions().stream().map(o -> optionValue(displayColor(o), lower)).collect(Collectors.toCollection(LinkedHashSet::new));
-        Set<String> sizes = p.getOptions().stream().map(o -> optionValue(o.getSize(), lower)).collect(Collectors.toCollection(LinkedHashSet::new));
+    private static Map<String, Object> wearNotice(Product p, StyleProfile style) {
+        Set<String> colors = p.getOptions().stream().map(o -> style.color(displayColor(o))).collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<String> sizes = p.getOptions().stream().map(o -> style.size(o.getSize())).collect(Collectors.toCollection(LinkedHashSet::new));
         Map<String, Object> w = new LinkedHashMap<>();
         w.put("material", p.getMaterial());
         w.put("color", String.join("/", colors));
@@ -200,34 +216,50 @@ public final class SmartStorePayload {
         return w;
     }
 
-    /** 상세설명 HTML: 문구 → 디테일컷 → 실측표 → 사이즈표 이미지 */
     static String detailHtml(Product p, List<UploadedImage> images) {
+        return detailHtml(p, images, new StyleProfile());
+    }
+
+    /** 상세설명 HTML. 블록 순서는 특성(detail.blocks)을 따른다. 기본: 문구 → 디테일컷 → 실측표 → 사이즈표 이미지 */
+    static String detailHtml(Product p, List<UploadedImage> images, StyleProfile style) {
         StringBuilder sb = new StringBuilder("<div style=\"max-width:860px;margin:0 auto;text-align:center;font-size:15px;line-height:1.8;color:#222\">");
-        if (!blank(p.getDescription())) {
-            for (String para : p.getDescription().strip().split("\\n\\s*\\n")) {
-                sb.append("<p style=\"margin:0 0 18px\">").append(HtmlUtils.htmlEscape(para.strip()).replace("\n", "<br>")).append("</p>");
+        for (StyleProfile.DetailBlock b : style.getDetail().getBlocks()) {
+            switch (b) {
+                case TEXT -> {
+                    if (!blank(p.getDescription())) {
+                        for (String para : p.getDescription().strip().split("\\n\\s*\\n")) {
+                            sb.append("<p style=\"margin:0 0 18px\">").append(HtmlUtils.htmlEscape(para.strip()).replace("\n", "<br>")).append("</p>");
+                        }
+                    }
+                }
+                case MAIN_IMAGES -> images(sb, urls(images, ImageSlot.MAIN));
+                case SUB_IMAGES -> images(sb, urls(images, ImageSlot.SUB));
+                case DETAIL_IMAGES -> images(sb, urls(images, ImageSlot.DETAIL));
+                case SIZE_TABLE -> {
+                    if (!p.getMeasurements().isEmpty()) {
+                        sb.append(sizeTable(p, style));
+                    }
+                }
+                case SIZE_IMAGES -> images(sb, urls(images, ImageSlot.SIZE));
             }
-        }
-        for (String u : urls(images, ImageSlot.DETAIL)) {
-            sb.append("<img src=\"").append(HtmlUtils.htmlEscape(u)).append("\" style=\"max-width:100%;display:block;margin:0 auto 12px\">");
-        }
-        if (!p.getMeasurements().isEmpty()) {
-            sb.append(sizeTable(p));
-        }
-        for (String u : urls(images, ImageSlot.SIZE)) {
-            sb.append("<img src=\"").append(HtmlUtils.htmlEscape(u)).append("\" style=\"max-width:100%;display:block;margin:12px auto\">");
         }
         return sb.append("</div>").toString();
     }
 
-    private static String sizeTable(Product p) {
+    private static void images(StringBuilder sb, List<String> urls) {
+        for (String u : urls) {
+            sb.append("<img src=\"").append(HtmlUtils.htmlEscape(u)).append("\" style=\"max-width:100%;display:block;margin:0 auto 12px\">");
+        }
+    }
+
+    private static String sizeTable(Product p, StyleProfile style) {
         Set<String> parts = new LinkedHashSet<>();
         p.getMeasurements().forEach(m -> parts.addAll(m.getMeasures().keySet()));
         StringBuilder t = new StringBuilder("<table style=\"margin:24px auto;border-collapse:collapse;font-size:13px\"><tr><th style=\"border:1px solid #ddd;padding:6px 10px\">사이즈(cm)</th>");
         parts.forEach(pt -> t.append("<th style=\"border:1px solid #ddd;padding:6px 10px\">").append(HtmlUtils.htmlEscape(pt)).append("</th>"));
         t.append("</tr>");
         for (ProductMeasurement m : p.getMeasurements()) {
-            t.append("<tr><td style=\"border:1px solid #ddd;padding:6px 10px\">").append(HtmlUtils.htmlEscape(m.getSize())).append("</td>");
+            t.append("<tr><td style=\"border:1px solid #ddd;padding:6px 10px\">").append(HtmlUtils.htmlEscape(style.size(m.getSize()))).append("</td>");
             for (String pt : parts) {
                 BigDecimal v = m.getMeasures().get(pt);
                 t.append("<td style=\"border:1px solid #ddd;padding:6px 10px\">").append(v == null ? "-" : v.stripTrailingZeros().toPlainString()).append("</td>");

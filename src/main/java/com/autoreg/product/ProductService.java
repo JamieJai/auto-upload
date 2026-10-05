@@ -149,7 +149,7 @@ public class ProductService {
     }
 
     public List<ValidationIssue> validate(Long tenantId, Long id, ValidationPhase phase) {
-        return validator.validate(find(tenantId, id), phase);
+        return validator.validate(find(tenantId, id), phase, tenants.get(tenantId).styleProfile());
     }
 
     /** 저장하지 않는 상품. 엑셀 미리보기 검증용으로 생성 시와 같은 규칙(기본값 채우기 포함)을 적용한다 */

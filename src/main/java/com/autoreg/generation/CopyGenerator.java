@@ -20,6 +20,7 @@ import com.autoreg.product.ProductOption;
 import com.autoreg.product.TextField;
 import com.autoreg.product.TextField.Source;
 import com.autoreg.product.validation.ProductValidator;
+import com.autoreg.tenant.StyleProfile;
 import com.autoreg.tenant.Tenant;
 
 import lombok.RequiredArgsConstructor;
@@ -66,13 +67,22 @@ public class CopyGenerator {
         if (fields.contains(TextField.OPTION_DISPLAY) && p.getOptions().isEmpty()) {
             throw new IllegalArgumentException("옵션이 없어 옵션 표시명을 만들 수 없습니다");
         }
+        StyleProfile style = tenant.styleProfile();
         JsonNode out = llm.generate(SYSTEM, prompt(p, tenant, fields), schema(fields));
-        apply(p, fields, out);
+        apply(p, fields, out, style);
     }
 
     static String prompt(Product p, Tenant tenant, Set<TextField> fields) {
+        StyleProfile style = tenant.styleProfile();
+        StyleProfile.Copy c = style.getCopy();
         StringBuilder sb = new StringBuilder();
         sb.append("## 판매자 문체 기준\n").append(blank(tenant.getBrandTone()) ? "(없음)" : tenant.getBrandTone()).append("\n\n");
+        if (!blank(c.getInstructions())) {
+            sb.append("## 이 쇼핑몰의 추가 규칙\n").append(c.getInstructions().strip()).append("\n\n");
+        }
+        if (!c.getBannedWords().isEmpty()) {
+            sb.append("## 쓰면 안 되는 표현\n").append(String.join(", ", c.getBannedWords())).append("\n\n");
+        }
         sb.append("## 상품 정보\n");
         line(sb, "카테고리", p.getCategory());
         line(sb, "판매가", p.getSalePrice() == null ? null : p.getSalePrice() + "원");
@@ -96,15 +106,28 @@ public class CopyGenerator {
         }
         sb.append("\n## 만들 것\n");
         if (fields.contains(TextField.NAME)) {
-            sb.append("- name: 상품명. 20~50자, 최대 ").append(ProductValidator.NAME_MAX)
-                    .append("자. 핵심 소재·핏·아이템명을 앞에. 색상·사이즈 나열, 혼용률 숫자, 특수문자 남발 금지\n");
+            int budget = nameBudget(style);
+            sb.append("- name: 상품명. 최대 ").append(budget)
+                    .append("자. 핵심 소재·핏·아이템명을 앞에. 색상·사이즈 나열, 혼용률 숫자, 특수문자 남발 금지");
+            if (!c.getNamePrefix().isBlank() || !c.getNameSuffix().isBlank()) {
+                sb.append(". 앞뒤 고정 문구(\"").append(c.getNamePrefix().strip()).append("\", \"").append(c.getNameSuffix().strip())
+                        .append("\")는 자동으로 붙으니 넣지 말 것");
+            }
+            sb.append('\n');
         }
         if (fields.contains(TextField.DESCRIPTION)) {
-            sb.append("- description: 상세설명. 300~800자 일반 텍스트(HTML·마크다운 금지). 착용감·연출·코디 위주, 문단은 줄바꿈으로\n");
+            sb.append("- description: 상세설명. ").append(c.getDescriptionMinLength()).append('~').append(c.getDescriptionMaxLength())
+                    .append("자 일반 텍스트(HTML·마크다운 금지). 착용감·연출·코디 위주, 문단은 줄바꿈으로\n");
         }
         if (fields.contains(TextField.SEARCH_KEYWORDS)) {
-            sb.append("- searchKeywords: 검색키워드 5~").append(ProductValidator.KEYWORDS_MAX)
-                    .append("개. 각각 한글 9자(UTF-8 29바이트) 이하, 띄어쓰기 없는 검색어 위주, 브랜드명 금지\n");
+            StyleProfile.Tags t = style.getTags();
+            int min = Math.max(t.getMin(), Math.min(5, t.getMax()));
+            sb.append("- searchKeywords: 검색키워드 ").append(min == t.getMax() ? "정확히 " + min : min + "~" + t.getMax())
+                    .append("개. 서로 겹치지 않게. 각각 한글 9자(UTF-8 29바이트) 이하, 띄어쓰기 없는 검색어 위주, 브랜드명 금지");
+            if (!blank(t.getLeadingRule())) {
+                sb.append(". ").append(t.getLeadingRule().strip());
+            }
+            sb.append('\n');
         }
         if (fields.contains(TextField.OPTION_DISPLAY)) {
             sb.append("- optionDisplays: 색상마다 {color: 입력 색상 그대로, display: 고객에게 보일 색상명 12자 이하}\n");
@@ -137,12 +160,26 @@ public class CopyGenerator {
     }
 
     /** 응답을 다듬어 채운다. 형식이 틀리면 GeneratedCopyException (재시도 대상) */
+    /** 앞뒤 고정 문구를 뺀, AI 가 쓸 수 있는 상품명 길이 */
+    static int nameBudget(StyleProfile style) {
+        StyleProfile.Copy c = style.getCopy();
+        return Math.max(10, Math.min(ProductValidator.NAME_MAX, c.getNameMaxLength()) - c.getNamePrefix().length() - c.getNameSuffix().length());
+    }
+
     static void apply(Product p, Set<TextField> fields, JsonNode out) {
+        apply(p, fields, out, new StyleProfile());
+    }
+
+    static void apply(Product p, Set<TextField> fields, JsonNode out, StyleProfile style) {
+        List<String> banned = style.getCopy().getBannedWords().stream().filter(w -> !w.isBlank()).toList();
         if (fields.contains(TextField.NAME)) {
             String name = oneLine(text(out, "name"));
-            if (name.isEmpty() || name.length() > ProductValidator.NAME_MAX) {
-                throw new GeneratedCopyException("생성된 상품명이 비었거나 " + ProductValidator.NAME_MAX + "자를 넘습니다");
+            if (name.isEmpty() || name.length() > nameBudget(style)) {
+                throw new GeneratedCopyException("생성된 상품명이 비었거나 " + nameBudget(style) + "자를 넘습니다");
             }
+            banned.stream().filter(name::contains).findFirst().ifPresent(w -> {
+                throw new GeneratedCopyException("생성된 상품명에 금지 표현이 있습니다: " + w);
+            });
             p.setName(name);
             p.getFieldSources().put(TextField.NAME, Source.AI);
         }
@@ -151,21 +188,25 @@ public class CopyGenerator {
             if (desc.length() < 50) {
                 throw new GeneratedCopyException("생성된 상세설명이 너무 짧습니다");
             }
+            banned.stream().filter(desc::contains).findFirst().ifPresent(w -> {
+                throw new GeneratedCopyException("생성된 상세설명에 금지 표현이 있습니다: " + w);
+            });
             p.setDescription(desc.length() > 5000 ? desc.substring(0, 5000) : desc);
             p.getFieldSources().put(TextField.DESCRIPTION, Source.AI);
         }
         if (fields.contains(TextField.SEARCH_KEYWORDS)) {
             LinkedHashSet<String> kws = new LinkedHashSet<>();
             out.path("searchKeywords").forEach(n -> {
-                String k = oneLine(n.asString(""));
+                String k = style.tag(oneLine(n.asString("")));
                 if (ProductValidator.tagFits(k)) {
                     kws.add(k);
                 }
             });
-            if (kws.isEmpty()) {
-                throw new GeneratedCopyException("검색키워드가 생성되지 않았습니다");
+            int max = Math.min(ProductValidator.KEYWORDS_MAX, style.getTags().getMax());
+            if (kws.isEmpty() || kws.size() < style.getTags().getMin()) {
+                throw new GeneratedCopyException("검색키워드가 " + kws.size() + "개만 생성되었습니다 (최소 " + style.getTags().getMin() + "개)");
             }
-            p.setSearchKeywords(new ArrayList<>(kws).subList(0, Math.min(kws.size(), ProductValidator.KEYWORDS_MAX)));
+            p.setSearchKeywords(new ArrayList<>(kws).subList(0, Math.min(kws.size(), max)));
             p.getFieldSources().put(TextField.SEARCH_KEYWORDS, Source.AI);
         }
         if (fields.contains(TextField.OPTION_DISPLAY)) {

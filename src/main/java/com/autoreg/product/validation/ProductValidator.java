@@ -16,6 +16,7 @@ import com.autoreg.product.NoticeField;
 import com.autoreg.product.Product;
 import com.autoreg.product.ProductMeasurement;
 import com.autoreg.product.ProductOption;
+import com.autoreg.tenant.StyleProfile;
 
 /**
  * 등록 전 필수값 검증. 어차피 등록 못 할 상품에 LLM 토큰을 쓰지 않도록 생성 단계보다 먼저 돈다.
@@ -33,6 +34,11 @@ public class ProductValidator {
     }
 
     public List<ValidationIssue> validate(Product p, ValidationPhase phase) {
+        return validate(p, phase, new StyleProfile());
+    }
+
+    /** 특성(StyleProfile)의 태그 개수·금지어·상품명 길이를 함께 본다 */
+    public List<ValidationIssue> validate(Product p, ValidationPhase phase, StyleProfile style) {
         List<ValidationIssue> issues = new ArrayList<>();
         checkBasics(p, issues);
         checkOptions(p, issues);
@@ -40,7 +46,7 @@ public class ProductValidator {
         checkNotice(p, issues);
         checkImages(p, issues);
         if (phase == ValidationPhase.READY) {
-            checkTexts(p, issues);
+            checkTexts(p, issues, style);
         }
         return issues;
     }
@@ -127,22 +133,37 @@ public class ProductValidator {
         }
     }
 
-    private static void checkTexts(Product p, List<ValidationIssue> issues) {
+    private static void checkTexts(Product p, List<ValidationIssue> issues, StyleProfile style) {
         if (blank(p.getName())) {
             issues.add(new ValidationIssue("name", "REQUIRED", "상품명을 입력하거나 생성하세요"));
-        } else if (p.getName().length() > NAME_MAX) {
-            issues.add(new ValidationIssue("name", "TOO_LONG", "상품명은 " + NAME_MAX + "자 이하여야 합니다"));
+        } else {
+            String finalName = style.finalName(p.getName());
+            int max = Math.min(NAME_MAX, style.getCopy().getNameMaxLength());
+            if (finalName.length() > max) {
+                issues.add(new ValidationIssue("name", "TOO_LONG", "상품명은 앞뒤 고정 문구 포함 " + max + "자 이하여야 합니다 (현재 "
+                        + finalName.length() + "자: " + finalName + ")"));
+            }
         }
         if (blank(p.getDescription())) {
             issues.add(new ValidationIssue("description", "REQUIRED", "상세설명을 입력하거나 생성하세요"));
         }
-        if (p.getSearchKeywords().size() > KEYWORDS_MAX) {
-            issues.add(new ValidationIssue("searchKeywords", "TOO_MANY", "검색키워드는 " + KEYWORDS_MAX + "개 이하여야 합니다"));
+        int n = p.getSearchKeywords().size();
+        int maxTags = Math.min(KEYWORDS_MAX, style.getTags().getMax());
+        if (n > maxTags) {
+            issues.add(new ValidationIssue("searchKeywords", "TOO_MANY", "검색키워드는 " + maxTags + "개 이하여야 합니다 (현재 " + n + "개)"));
         }
-        List<String> tooLong = p.getSearchKeywords().stream().filter(k -> !tagFits(k)).toList();
+        if (n < style.getTags().getMin()) {
+            issues.add(new ValidationIssue("searchKeywords", "TOO_FEW", "검색키워드는 " + style.getTags().getMin() + "개 이상이어야 합니다 (현재 " + n + "개)"));
+        }
+        List<String> tooLong = p.getSearchKeywords().stream().map(style::tag).filter(k -> !tagFits(k)).toList();
         if (!tooLong.isEmpty()) {
             issues.add(new ValidationIssue("searchKeywords", "TOO_LONG_BYTES",
                     "검색키워드는 각각 " + TAG_MAX_BYTES + "바이트 미만이어야 합니다 (한글 약 9자): " + String.join(", ", tooLong)));
+        }
+        String text = (p.getName() == null ? "" : p.getName()) + "\n" + (p.getDescription() == null ? "" : p.getDescription());
+        List<String> banned = style.getCopy().getBannedWords().stream().filter(w -> !w.isBlank() && text.contains(w)).toList();
+        if (!banned.isEmpty()) {
+            issues.add(new ValidationIssue("description", "BANNED_WORD", "쓰면 안 되는 표현이 있습니다: " + String.join(", ", banned)));
         }
     }
 

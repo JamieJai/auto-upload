@@ -46,7 +46,8 @@ public class SmartStoreAdapter implements ChannelAdapter {
     @Override
     public Result register(RegistrationContext ctx, List<UploadedImage> images) {
         Map<String, Object> settings = ctx.account().getSettings();
-        Map<String, Object> payload = SmartStorePayload.build(ctx.product(), ctx.channelCategoryId(), images, settings, ctx.reference());
+        Map<String, Object> payload = SmartStorePayload.build(ctx.product(), ctx.channelCategoryId(), images, settings, ctx.reference(),
+                style(ctx));
         if (SmartStorePayload.dryRun(settings)) {
             throw new ChannelException(DRY_RUN, false, null, Map.of("dryRun", true, "request", payload));
         }
@@ -78,10 +79,10 @@ public class SmartStoreAdapter implements ChannelAdapter {
         List<String> problems = new java.util.ArrayList<>();
         Map<String, Object> origin = got.get("originProduct") instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
         Map<String, Object> channel = got.get("smartstoreChannelProduct") instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
-        if (!ctx.product().getName().equals(origin.get("name"))) {
+        if (!style(ctx).finalName(ctx.product().getName()).equals(origin.get("name"))) {
             problems.add("상품명이 다릅니다 (" + origin.get("name") + ")");
         }
-        Object expected = ctx.account().getSettings().getOrDefault("displayStatus", "SUSPENSION");
+        Object expected = style(ctx).getRegistration().getDisplayStatus();
         if (!String.valueOf(expected).equals(String.valueOf(channel.get("channelProductDisplayStatusType")))) {
             problems.add("전시 상태가 " + channel.get("channelProductDisplayStatusType") + " 입니다 (기대: " + expected + ")");
         }
@@ -92,6 +93,13 @@ public class SmartStoreAdapter implements ChannelAdapter {
             problems.add("상세 이미지가 " + actualImgs + "장입니다 (보낸 것 " + expectedImgs + "장)");
         }
         return problems.isEmpty() ? Optional.empty() : Optional.of(String.join("; ", problems));
+    }
+
+    /** 판매자 특성. 아직 정하지 않았으면 채널 계정의 예전 옵션·전시 설정을 쓴다 */
+    static com.autoreg.tenant.StyleProfile style(RegistrationContext ctx) {
+        return ctx.tenant().getStyle() == null || ctx.tenant().getStyle().isEmpty()
+                ? com.autoreg.tenant.StyleProfile.legacy(ctx.account().getSettings())
+                : ctx.tenant().styleProfile();
     }
 
     static int countImgs(String html) {

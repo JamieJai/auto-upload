@@ -97,7 +97,7 @@ public class ExcelImportService {
             }
             raw.measurements().forEach((size, measures) -> p.getMeasurements().add(measurement(size, measures)));
             // 이미지는 엑셀로 올리지 않으므로 여기서는 보지 않는다
-            warnings = validator.validate(p, ValidationPhase.INPUT).stream()
+            warnings = validator.validate(p, ValidationPhase.INPUT, tenant.styleProfile()).stream()
                     .filter(i -> !i.field().startsWith("images.")).toList();
         }
         return new ParsedRow(raw.rowNumber(), raw.product(), raw.colors(), raw.sizes(), raw.stock(),

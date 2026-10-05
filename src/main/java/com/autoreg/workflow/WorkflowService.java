@@ -57,7 +57,7 @@ public class WorkflowService {
     public ProductResponse submit(Long tenantId, Long id) {
         Product p = find(tenantId, id);
         require(p, EnumSet.of(ProductStatus.DRAFT, ProductStatus.NEEDS_INPUT), "제출");
-        List<ValidationIssue> issues = validator.validate(p, ValidationPhase.INPUT);
+        List<ValidationIssue> issues = validator.validate(p, ValidationPhase.INPUT, tenants.get(tenantId).styleProfile());
         if (!issues.isEmpty()) {
             p.setStatus(ProductStatus.NEEDS_INPUT);
             throw new ValidationFailedException("필수값이 비어 있어 보완이 필요합니다", issues);
@@ -76,7 +76,7 @@ public class WorkflowService {
     public ProductResponse approve(Long tenantId, Long id) {
         Product p = find(tenantId, id);
         require(p, EnumSet.of(ProductStatus.PENDING_APPROVAL), "승인");
-        List<ValidationIssue> issues = validator.validate(p, ValidationPhase.READY);
+        List<ValidationIssue> issues = validator.validate(p, ValidationPhase.READY, tenants.get(tenantId).styleProfile());
         if (!issues.isEmpty()) {
             throw new ValidationFailedException("등록 전 확인이 필요한 항목이 있습니다", issues);
         }
