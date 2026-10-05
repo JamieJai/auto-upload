@@ -151,6 +151,12 @@ public final class SmartStorePayload {
                 "afterServiceTelephoneNumber", digits(p.getAsPhone()),
                 "afterServiceGuideContent", p.getAsManager()));
         d.put("sellerCodeInfo", Map.of("sellerManagementCode", p.getCode()));
+        StyleProfile.Registration reg = style.getRegistration();
+        if ("KOREA_OR_OTHER".equals(reg.getOriginMode())) {
+            d.put("originAreaInfo", StyleProfile.isKorea(p.getOriginCountry())
+                    ? Map.of("originAreaCode", "00", "content", "국산", "plural", false)
+                    : Map.of("originAreaCode", reg.getOtherOriginCode(), "content", reg.getOtherOriginContent(), "plural", false));
+        }
         d.put("optionInfo", optionInfo(p, style));
         d.putIfAbsent("taxType", "TAX");
         d.putIfAbsent("minorPurchasable", true);

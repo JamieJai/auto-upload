@@ -86,6 +86,15 @@ public class ExtractJobHandler {
                 throw e.retryable() ? JobException.retryable(e.getMessage(), e.retryAfter()) : JobException.invalid(e.getMessage());
             }
             List<String> filled = new ArrayList<>();
+            com.autoreg.tenant.StyleProfile style = t.styleProfile();
+            if ((p.getName() == null || p.getName().isBlank()) && "SOURCE".equals(style.getCopy().getNameSource()) && ex.nameHint() != null) {
+                String name = style.cleanName(ex.nameHint());
+                if (!name.isBlank()) {
+                    p.setName(name);
+                    p.getFieldSources().put(com.autoreg.product.TextField.NAME, com.autoreg.product.TextField.Source.SOURCE);
+                    filled.add("상품명(원문: " + ex.nameHint() + " → " + name + ")");
+                }
+            }
             if (p.getCategory() == null && ex.category() != null) {
                 p.setCategory(ex.category());
                 filled.add("카테고리");

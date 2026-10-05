@@ -120,6 +120,16 @@ public class NaverCommerceClient {
         return toMap(send(c, "POST", "/v2/products", payload));
     }
 
+    /** 읽기 전용 조회 (원산지 코드, 카테고리 등). JSON 을 Map/List 로 */
+    public Object getJson(Credentials c, String path) {
+        return json.convertValue(send(c, "GET", path, null), Object.class);
+    }
+
+    /** 상품 목록 한 쪽 (읽기 전용) */
+    public Map<String, Object> searchProducts(Credentials c, int page, int size) {
+        return toMap(send(c, "POST", "/v1/products/search", Map.of("page", page, "size", size)));
+    }
+
     /** 채널상품 조회 (등록 후 재조회 검증용) */
     public Map<String, Object> getChannelProduct(Credentials c, String channelProductNo) {
         return toMap(send(c, "GET", "/v2/products/channel-products/" + URLEncoder.encode(channelProductNo, StandardCharsets.UTF_8), null));

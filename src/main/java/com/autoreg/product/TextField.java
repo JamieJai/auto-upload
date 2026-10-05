@@ -7,5 +7,6 @@ public enum TextField {
     SEARCH_KEYWORDS,
     OPTION_DISPLAY;
 
-    public enum Source { MANUAL, AI }
+    /** MANUAL: 사람, AI: 생성, SOURCE: 도매처 원문에서 옮김 */
+    public enum Source { MANUAL, AI, SOURCE }
 }

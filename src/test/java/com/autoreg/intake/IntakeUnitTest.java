@@ -26,6 +26,28 @@ class IntakeUnitTest {
     }
 
     @Test
+    void priceRuleRoundDownWithoutFloatingError() {
+        Map<String, Object> rule = Map.of("multiplier", 1.6, "roundUnit", 100.0, "roundMode", "DOWN");
+        assertThat(PriceRule.salePrice(21000, rule)).isEqualTo(33600);
+        assertThat(PriceRule.salePrice(21041, rule)).isEqualTo(33600); // 33665.6 → 33,600
+        assertThat(PriceRule.salePrice(21000, Map.of("multiplier", 1.6, "roundUnit", 100.0))).isEqualTo(33600);
+        assertThat(PriceRule.salePrice(21041, Map.of("multiplier", 1.6, "roundUnit", 100.0, "roundMode", "NEAREST"))).isEqualTo(33700);
+    }
+
+    @Test
+    void sourceNameCleanup() {
+        var s = new com.autoreg.tenant.StyleProfile();
+        s.getCopy().setRemoveParentheses(true);
+        s.getCopy().setRemoveBrackets(true);
+        s.getCopy().getReplacements().put("mtm", "맨투맨");
+        assertThat(s.cleanName("무디 mtm(브이,레이스,맨투맨)")).isEqualTo("무디 맨투맨");
+        assertThat(s.cleanName("[로엔] 무디 MTM")).isEqualTo("무디 맨투맨");
+        assertThat(s.finalName("무디 mtm")).isEqualTo("무디 맨투맨");
+        assertThat(com.autoreg.tenant.StyleProfile.isKorea("대한민국")).isTrue();
+        assertThat(com.autoreg.tenant.StyleProfile.isKorea("중국")).isFalse();
+    }
+
+    @Test
     void dropsValuesNotInSource() {
         String source = "도매가 18,000원 / 소재: 면 100% / 컬러: 블랙, 아이보리 / FREE / 총장 108 가슴단면 52.5";
         var out = JsonMapper.builder().build().readTree("""

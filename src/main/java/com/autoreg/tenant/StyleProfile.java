@@ -69,6 +69,13 @@ public class StyleProfile {
         private List<String> bannedWords = new ArrayList<>();
         /** AI 에게 추가로 줄 지시 (상품명 스타일, 상세설명 구성 등 자유 문장) */
         private String instructions = "";
+        /** 상품명 출처: AI(생성) 또는 SOURCE(도매처 원문 상품명을 정리해서 그대로) */
+        private String nameSource = "AI";
+        /** 원문 상품명에서 [..] / (..) 부분 지우기 */
+        private boolean removeBrackets = false;
+        private boolean removeParentheses = false;
+        /** 단어 바꾸기 (대소문자 무시). 예: {"mtm": "맨투맨"}. AI 로 만든 상품명에도 적용 */
+        private Map<String, String> replacements = new LinkedHashMap<>();
     }
 
     @Data
@@ -122,6 +129,14 @@ public class StyleProfile {
         private int discountValue = 0;
         /** PERCENT 또는 WON */
         private String discountUnit = "PERCENT";
+        /**
+         * 원산지: REFERENCE(레퍼런스 상품 설정 그대로) 또는 KOREA_OR_OTHER
+         * (상품의 제조국이 대한민국이면 국산, 그 밖은 모두 기타)
+         */
+        private String originMode = "REFERENCE";
+        /** KOREA_OR_OTHER 에서 '기타' 로 보낼 네이버 원산지 코드와 표시 문구 */
+        private String otherOriginCode = "";
+        private String otherOriginContent = "상세설명 참조";
     }
 
     public static StyleProfile from(Map<String, Object> stored) {
@@ -181,18 +196,61 @@ public class StyleProfile {
         if (detail.blocks.isEmpty()) {
             throw new IllegalArgumentException("상세페이지 구성은 한 블록 이상이어야 합니다");
         }
+        if (!List.of("AI", "SOURCE").contains(copy.nameSource)) {
+            throw new IllegalArgumentException("상품명 출처는 AI 또는 SOURCE 입니다");
+        }
+        if (!List.of("REFERENCE", "KOREA_OR_OTHER").contains(registration.originMode)) {
+            throw new IllegalArgumentException("원산지 방식은 REFERENCE 또는 KOREA_OR_OTHER 입니다");
+        }
+        if ("KOREA_OR_OTHER".equals(registration.originMode) && registration.otherOriginCode.isBlank()) {
+            throw new IllegalArgumentException("'기타' 원산지 코드를 넣으세요");
+        }
         if (options.groupName1.isBlank() || options.groupName2.isBlank()) {
             throw new IllegalArgumentException("옵션 그룹명이 비어 있습니다");
         }
         return this;
     }
 
-    /** 앞뒤 말을 붙인 최종 상품명. 이미 붙어 있으면 다시 붙이지 않는다 */
+    /** 원문 상품명 정리: [..]·(..) 지우기, 단어 바꾸기, 공백 정리 */
+    public String cleanName(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String n = raw;
+        if (copy.removeBrackets) {
+            n = n.replaceAll("\\[[^\\]]*\\]", " ");
+        }
+        if (copy.removeParentheses) {
+            n = n.replaceAll("\\([^)]*\\)", " ");
+        }
+        return replaceWords(n).replaceAll("\\s+", " ").strip();
+    }
+
+    public String replaceWords(String n) {
+        for (Map.Entry<String, String> e : copy.replacements.entrySet()) {
+            if (e.getKey() != null && !e.getKey().isBlank()) {
+                n = n.replaceAll("(?i)" + java.util.regex.Pattern.quote(e.getKey().strip()),
+                        java.util.regex.Matcher.quoteReplacement(e.getValue() == null ? "" : e.getValue()));
+            }
+        }
+        return n;
+    }
+
+    /** 대한민국 표기면 true (원산지 KOREA_OR_OTHER 판단) */
+    public static boolean isKorea(String country) {
+        if (country == null) {
+            return false;
+        }
+        String c = country.replaceAll("\\s+", "");
+        return List.of("대한민국", "한국", "국산", "국내산", "korea", "southkorea", "republicofkorea").contains(c.toLowerCase(Locale.ROOT));
+    }
+
+    /** 앞뒤 말을 붙인 최종 상품명. 단어 바꾸기를 먼저 하고, 이미 붙어 있으면 다시 붙이지 않는다 */
     public String finalName(String name) {
         if (name == null || name.isBlank()) {
             return name;
         }
-        String n = name.strip();
+        String n = replaceWords(name).replaceAll("\\s+", " ").strip();
         if (!copy.namePrefix.isEmpty() && !n.startsWith(copy.namePrefix.strip())) {
             n = copy.namePrefix + n;
         }
